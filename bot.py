@@ -1,6 +1,7 @@
 import discord
 import gspread
 import asyncio
+import os
 from oauth2client.service_account import ServiceAccountCredentials
 
 # Load credentials from JSON file
@@ -15,7 +16,7 @@ SHEET_NAME = "testing"
 worksheet = client_gspread.open(SHEET_NAME).sheet1
 
 # Discord Bot Setup
-TOKEN = "MTM1MDQwNjc3OTM4MDQzNzA1Mw.GYwtzM.AhKd23CxZtp6BW5x967i90TbnAY8DosoYJZfpk"
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")  # Fetch token from Replit secrets
 CHANNEL_ID = 1202157205839953962  # Replace with your Discord channel ID
 
 intents = discord.Intents.default()
