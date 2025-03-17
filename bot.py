@@ -38,9 +38,20 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 form_channels = {}
 
+def load_last_row(sheet_name):
+    try:
+        with open(f'{sheet_name}_last_row.json', 'r') as f:
+            return json.load(f).get('last_row', 1)
+    except FileNotFoundError:
+        return 1
+
+def save_last_row(sheet_name, last_row):
+    with open(f'{sheet_name}_last_row.json', 'w') as f:
+        json.dump({'last_row': last_row}, f)
+
 async def check_new_responses(sheet_name, channel_id):
     worksheet = client_gspread.open(sheet_name).sheet1
-    last_row = 1  # Start from the first data row (header is row 0)
+    last_row = load_last_row(sheet_name)  # Load last_row from file
     await bot.wait_until_ready()
     channel = bot.get_channel(channel_id)
 
@@ -49,6 +60,7 @@ async def check_new_responses(sheet_name, channel_id):
         if len(rows) > last_row:
             new_data = rows[last_row:]  # Get new rows
             last_row = len(rows)  # Update last seen row
+            save_last_row(sheet_name, last_row)  # Save last_row to file
 
             for row in new_data:
                 embed = discord.Embed(
@@ -74,6 +86,17 @@ async def add_form(ctx, sheet_name: str, channel_id: int):
     if sheet_name in form_channels:
         await ctx.send(f"Form '{sheet_name}' is already being tracked.")
         return
+    
+    try:
+        # Try to open the worksheet to check if it exists
+        worksheet = client_gspread.open(sheet_name).sheet1
+    except gspread.SpreadsheetNotFound:
+        await ctx.send(f"Form '{sheet_name}' does not exist.")
+        return
+    except Exception as e:
+        await ctx.send(f"An error occurred: {str(e)}")
+        return
+    
     form_channels[sheet_name] = channel_id
     bot.loop.create_task(check_new_responses(sheet_name, channel_id))
     await ctx.send(f"Started tracking form '{sheet_name}' in channel <#{channel_id}>.")
