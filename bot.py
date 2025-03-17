@@ -65,15 +65,26 @@ async def check_new_responses(sheet_name, channel_id):
             for row in new_data:
                 embed = discord.Embed(
                     title="📝 New Google Form Response",
-                    color=discord.Color.red()
+                    color=discord.Color.white()
                 )
 
                 headers = worksheet.row_values(1)  # Get column headers
                 for i in range(len(row)):
-                    embed.add_field(name=f"**{headers[i]}**", value=row[i] if row[i] else "N/A", inline=True)
+                    embed.add_field(name=f"**{headers[i]}**", value=row[i] if row[i] else "N/A", inline=False)
 
                 embed.set_footer(text="Google Form Auto-Response Bot")
-                await channel.send(embed=embed)
+                
+                try:
+                    await channel.send(embed=embed)
+                    await asyncio.sleep(2)  # Wait 2 seconds before sending the next message
+                except discord.errors.HTTPException as e:
+                    if e.status == 429:
+                        retry_after = e.retry_after if hasattr(e, 'retry_after') else 5
+                        print(f"Rate limited: {e}. Retrying in {retry_after} seconds.")
+                        await asyncio.sleep(retry_after)
+                    else:
+                        print(f"An error occurred: {e}")
+                        await asyncio.sleep(5)
 
         await asyncio.sleep(10)  # Check every 10 seconds
 
