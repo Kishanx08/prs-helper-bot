@@ -65,12 +65,12 @@ async def check_new_responses(sheet_name, channel_id):
             for row in new_data:
                 embed = discord.Embed(
                     title="📝 New Google Form Response",
-                    color=discord.Color.blue()
+                    color=discord.Color.red()
                 )
 
                 headers = worksheet.row_values(1)  # Get column headers
                 for i in range(len(row)):
-                    embed.add_field(name=f"**{headers[i]}**", value=row[i] if row[i] else "N/A", inline=False)
+                    embed.add_field(name=f"**{headers[i]}**", value=row[i] if row[i] else "N/A", inline=True)
 
                 embed.set_footer(text="Google Form Auto-Response Bot")
                 await channel.send(embed=embed)
