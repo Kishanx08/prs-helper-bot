@@ -65,7 +65,8 @@ async def check_new_responses(sheet_name, channel_id):
             for row in new_data:
                 embed = discord.Embed(
                     title="📝 New Google Form Response",
-                    color=discord.Color.white()
+                    color=discord.Color.from_rgb(255, 255, 255)
+
                 )
 
                 headers = worksheet.row_values(1)  # Get column headers
