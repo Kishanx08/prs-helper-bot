@@ -27,7 +27,10 @@ creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
 client_gspread = gspread.authorize(creds)  # Initialize client_gspread
 
 # Discord Bot Setup
-TOKEN = os.getenv("DISCORD_BOT_TOKEN")  # Fetch token from Replit secrets
+TOKEN = os.getenv("DISCORD_TOKEN")  # Ensure the correct env variable name
+
+if TOKEN is None:
+    raise ValueError("DISCORD_TOKEN is not set!")
 
 intents = discord.Intents.default()
 intents.message_content = True  # Enable message content intent
@@ -96,4 +99,5 @@ def run_web():
 # Run Flask server in a separate thread
 threading.Thread(target=run_web, daemon=True).start()
 
+# Move `bot.run(TOKEN)` to the end, after defining `bot`
 bot.run(TOKEN)
