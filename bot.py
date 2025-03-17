@@ -5,6 +5,7 @@ import os
 import json
 import threading
 from flask import Flask
+from discord.ext import commands
 from google.oauth2.service_account import Credentials
 
 # Load credentials from Replit Secrets
@@ -23,25 +24,24 @@ scopes = [
 ]
 
 creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-client_gspread = gspread.authorize(creds)  # ✅ This line initializes client_gspread properly
-
-# Open your Google Sheet
-SHEET_NAME = "testing"
-worksheet = client_gspread.open(SHEET_NAME).sheet1  # ✅ This should work now
+client_gspread = gspread.authorize(creds)  # Initialize client_gspread
 
 # Discord Bot Setup
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")  # Fetch token from Replit secrets
-CHANNEL_ID = 1202157205839953962  # Replace with your Discord channel ID
 
 intents = discord.Intents.default()
-client = discord.Client(intents=intents)
+intents.message_content = True  # Enable message content intent
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-async def check_new_responses():
+form_channels = {}
+
+async def check_new_responses(sheet_name, channel_id):
+    worksheet = client_gspread.open(sheet_name).sheet1
     last_row = 1  # Start from the first data row (header is row 0)
-    await client.wait_until_ready()
-    channel = client.get_channel(CHANNEL_ID)
+    await bot.wait_until_ready()
+    channel = bot.get_channel(channel_id)
 
-    while not client.is_closed():
+    while not bot.is_closed():
         rows = worksheet.get_all_values()
         if len(rows) > last_row:
             new_data = rows[last_row:]  # Get new rows
@@ -62,10 +62,26 @@ async def check_new_responses():
 
         await asyncio.sleep(10)  # Check every 10 seconds
 
-@client.event
+@bot.event
 async def on_ready():
-    print(f'✅ Logged in as {client.user}')
-    client.loop.create_task(check_new_responses())
+    print(f'✅ Logged in as {bot.user}')
+
+@bot.command(name="add_form")
+async def add_form(ctx, sheet_name: str, channel_id: int):
+    if sheet_name in form_channels:
+        await ctx.send(f"Form '{sheet_name}' is already being tracked.")
+        return
+    form_channels[sheet_name] = channel_id
+    bot.loop.create_task(check_new_responses(sheet_name, channel_id))
+    await ctx.send(f"Started tracking form '{sheet_name}' in channel <#{channel_id}>.")
+
+@bot.command(name="remove_form")
+async def remove_form(ctx, sheet_name: str):
+    if sheet_name not in form_channels:
+        await ctx.send(f"Form '{sheet_name}' is not being tracked.")
+        return
+    del form_channels[sheet_name]
+    await ctx.send(f"Stopped tracking form '{sheet_name}'.")
 
 # Flask Web Server to Keep Replit Alive
 app = Flask(__name__)
@@ -75,9 +91,9 @@ def home():
     return "✅ Bot is running!"
 
 def run_web():
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=5000)  # Use a different port if needed
 
 # Run Flask server in a separate thread
 threading.Thread(target=run_web, daemon=True).start()
 
-client.run(TOKEN)
+bot.run(TOKEN)
