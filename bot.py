@@ -41,10 +41,10 @@ form_channels = {}
 # Load form_channels from file
 def load_form_channels():
     try:
-        with open('form_channels.json', 'r') as file:
+        with open("form_channels.json", "r") as f:  # ✅ Define 'f' inside 'with open'
             return json.load(f)
-    except FileNotFoundError:
-        return {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}  # Return an empty dictionary if the file doesn't exist or has invalid JSO
 
 # Save form_channels to file
 def save_form_channels():
@@ -56,7 +56,7 @@ form_channels = load_form_channels()
 
 def load_last_row(sheet_name):
     try:
-        with open(f'{sheet_name}_last_row.json', 'r') as f:
+        with open(f'{sheet_name}_last_row.json', 'r') as file:
             return json.load(f).get('last_row', 1)
     except FileNotFoundError:
         return 1
