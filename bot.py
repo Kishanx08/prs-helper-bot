@@ -82,7 +82,7 @@ async def check_new_responses(sheet_name, channel_id):
             for row in new_data:
                 embed = discord.Embed(
                     title="📝 New Google Form Response",
-                    color=discord.Color.white()  # Changed to white color
+                    color=discord.Color.blue()  # Changed to blue color
 
                 )
 
