@@ -9,7 +9,7 @@ from flask import Flask
 from discord.ext import commands
 from google.oauth2.service_account import Credentials
 
-# Load credentials from environment variables 
+# Load credentials from environment variables
 creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 if not creds_json:
     raise ValueError("🚨 Google Service Account JSON is missing! Add it in Replit Secrets.")
@@ -33,9 +33,6 @@ if TOKEN is None:
 intents = discord.Intents.default()
 intents.message_content = True  # Enable message content intent
 bot = commands.Bot(command_prefix="!", intents=intents)
-
-ython
-Copy
 
 # MongoDB Setup
 MONGO_URI = os.getenv("MONGO_URI")
