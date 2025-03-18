@@ -50,7 +50,7 @@ def load_form_channels():
 def save_form_channels():
     with open("form_channels.json", "w") as file:
         json.dump(form_channels, file, indent=4)
-    print("✅ form_channels.json saved:", forms)  # Debugging
+    print("✅ form_channels.json saved:", form_channels)  # Debugging
 
 form_channels = load_form_channels()
 
