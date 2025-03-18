@@ -59,7 +59,7 @@ if MONGO_URI:
         raise ValueError(f"Invalid MONGO_URI format: {e}")
 
 client = MongoClient(MONGO_URI)
-db = client['prs-helper-bot']  # Replace with your database name
+db = client['prs-helpter']  # Replace with your database name
 form_channels_collection = db['form_channels']
 
 # Load form_channels from MongoDB
