@@ -38,6 +38,21 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 form_channels = {}
 
+# Load form_channels from file
+def load_form_channels():
+    try:
+        with open('form_channels.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+# Save form_channels to file
+def save_form_channels():
+    with open('form_channels.json', 'w') as f:
+        json.dump(form_channels, f)
+
+form_channels = load_form_channels()
+
 def load_last_row(sheet_name):
     try:
         with open(f'{sheet_name}_last_row.json', 'r') as f:
@@ -65,7 +80,7 @@ async def check_new_responses(sheet_name, channel_id):
             for row in new_data:
                 embed = discord.Embed(
                     title="📝 New Google Form Response",
-                    color=discord.Color.from_rgb(255, 255, 255)
+                    color=discord.Color.white()  # Changed to white color
 
                 )
 
@@ -87,7 +102,7 @@ async def check_new_responses(sheet_name, channel_id):
                         print(f"An error occurred: {e}")
                         await asyncio.sleep(5)
 
-        await asyncio.sleep(10)  # Check every 10 seconds
+        await asyncio.sleep(60)  # Check every 1 minute
 
 @bot.event
 async def on_ready():
@@ -110,6 +125,7 @@ async def add_form(ctx, sheet_name: str, channel_id: int):
         return
     
     form_channels[sheet_name] = channel_id
+    save_form_channels()
     bot.loop.create_task(check_new_responses(sheet_name, channel_id))
     await ctx.send(f"Started tracking form '{sheet_name}' in channel <#{channel_id}>.")
 
@@ -119,7 +135,26 @@ async def remove_form(ctx, sheet_name: str):
         await ctx.send(f"Form '{sheet_name}' is not being tracked.")
         return
     del form_channels[sheet_name]
+    save_form_channels()
     await ctx.send(f"Stopped tracking form '{sheet_name}'.")
+
+@bot.command(name="list_forms")
+async def list_forms(ctx):
+    if not form_channels:
+        await ctx.send("No forms are currently being tracked.")
+        return
+    
+    embed = discord.Embed(
+        title="📋 Tracked Forms",
+        color=discord.Color.blue()
+    )
+    
+    for sheet_name, channel_id in form_channels.items():
+        channel = bot.get_channel(channel_id)
+        channel_mention = channel.mention if channel else f"Channel ID: {channel_id}"
+        embed.add_field(name=sheet_name, value=channel_mention, inline=False)
+    
+    await ctx.send(embed=embed)
 
 # Flask Web Server to Keep Replit Alive
 app = Flask(__name__)
