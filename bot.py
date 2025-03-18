@@ -8,7 +8,6 @@ import threading
 from flask import Flask
 from discord.ext import commands
 from google.oauth2.service_account import Credentials
-from urllib.parse import quote_plus  # Import this for URL encoding
 
 # Load credentials from environment variables 
 creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
@@ -35,27 +34,16 @@ intents = discord.Intents.default()
 intents.message_content = True  # Enable message content intent
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+ython
+Copy
+
 # MongoDB Setup
 MONGO_URI = os.getenv("MONGO_URI")
 
-if MONGO_URI:
-    try:
-        # Split the URI into parts
-        scheme, rest = MONGO_URI.split("://", 1)  # Split on the first occurrence of "://"
-        userinfo, host_and_db = rest.split("@", 1)  # Split on the first occurrence of "@"
-        username, password = userinfo.split(":", 1)  # Split on the first occurrence of ":"
+if not MONGO_URI:
+    raise ValueError("MONGO_URI is not set!")
 
-        # Encode the username and password
-        encoded_username = quote_plus(username)  # Encodes special characters like '-'
-        encoded_password = quote_plus(password)  # Encodes special characters like '@'
-
-        # Reconstruct the URI with encoded credentials
-        encoded_userinfo = f"{encoded_username}:{encoded_password}"
-        MONGO_URI = f"{scheme}://{encoded_userinfo}@{host_and_db}"
-
-        print(f"Reconstructed MONGO_URI: {MONGO_URI}")  # Debugging
-    except Exception as e:
-        raise ValueError(f"Invalid MONGO_URI format: {e}")
+print(f"Using MONGO_URI: {MONGO_URI}")  # Debugging
 
 # Connect to MongoDB
 client = MongoClient(MONGO_URI)
