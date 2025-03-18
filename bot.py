@@ -2,7 +2,7 @@ import discord
 import gspread
 import asyncio
 import os
-import json
+from pymongo import MongoClient
 import threading
 from flask import Flask
 from discord.ext import commands
@@ -36,59 +36,50 @@ intents = discord.Intents.default()
 intents.message_content = True  # Enable message content intent
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-form_channels = {}
+# MongoDB Setup
+MONGO_URI = os.getenv("MONGO_URI")
+client = MongoClient(MONGO_URI)
+db = client['prs-helper-bot']  # Replace with your database name
+form_channels_collection = db['form_channels']
 
-# Load form_channels from file
+# Load form_channels from MongoDB
 def load_form_channels():
-    try:
-        with open("form_channels.json", "r") as file:
-            data = json.load(file)
-            print("✅ form_channels.json loaded:", data)  # Debugging
-            return data
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print("⚠️ Error loading form_channels.json:", str(e))  # Debugging
-        # Initialize the file with an empty JSON object if it doesn't exist or is invalid
-        with open("form_channels.json", "w") as file:
-            json.dump({}, file, indent=4)
-        print("✅ Initialized form_channels.json with an empty dictionary")  # Debugging
-        return {}  # Return an empty dictionary
+    form_channels = {}
+    for document in form_channels_collection.find():
+        form_channels[document['sheet_name']] = document['channel_id']
+    print("✅ form_channels loaded from MongoDB:", form_channels)  # Debugging
+    return form_channels
 
-# Save form_channels to file
-def save_form_channels():
-    try:
-        with open("form_channels.json", "w") as file:
-            json.dump(form_channels, file, indent=4)
-        print("✅ form_channels.json saved:", form_channels)  # Debugging
-    except Exception as e:
-        print("⚠️ Error saving form_channels.json:", str(e))  # Debugging
+# Save form_channels to MongoDB
+def save_form_channels(form_channels):
+    form_channels_collection.delete_many({})  # Clear existing data
+    for sheet_name, channel_id in form_channels.items():
+        form_channels_collection.insert_one({'sheet_name': sheet_name, 'channel_id': channel_id})
+    print("✅ form_channels saved to MongoDB:", form_channels)  # Debugging
 
 form_channels = load_form_channels()
 
 def load_last_row(sheet_name):
-    try:
-        with open(f'{sheet_name}_last_row.json', 'r') as file:
-            data = json.load(file).get('last_row', 1)
-            print(f"✅ {sheet_name}_last_row.json loaded:", data)  # Debugging
-            return data
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"⚠️ Error loading {sheet_name}_last_row.json:", str(e))  # Debugging
-        # Initialize the file with the default last row if it doesn't exist or is invalid
-        with open(f'{sheet_name}_last_row.json', "w") as file:
-            json.dump({"last_row": 1}, file, indent=4)
-        print(f"✅ Initialized {sheet_name}_last_row.json with last_row: 1")  # Debugging
+    last_row_document = db['last_rows'].find_one({'sheet_name': sheet_name})
+    if last_row_document:
+        last_row = last_row_document.get('last_row', 1)
+        print(f"✅ {sheet_name} last_row loaded from MongoDB:", last_row)  # Debugging
+        return last_row
+    else:
+        print(f"⚠️ {sheet_name} last_row not found, initializing to 1")  # Debugging
         return 1
 
 def save_last_row(sheet_name, last_row):
-    try:
-        with open(f'{sheet_name}_last_row.json', "w") as file:
-            json.dump({"last_row": last_row}, file, indent=4)
-        print(f"✅ {sheet_name}_last_row.json saved:", {"last_row": last_row})  # Debugging
-    except Exception as e:
-        print(f"⚠️ Error saving {sheet_name}_last_row.json:", str(e))  # Debugging
+    db['last_rows'].update_one(
+        {'sheet_name': sheet_name},
+        {'$set': {'last_row': last_row}},
+        upsert=True
+    )
+    print(f"✅ {sheet_name} last_row saved to MongoDB:", {"last_row": last_row})  # Debugging
 
 async def check_new_responses(sheet_name, channel_id):
     worksheet = client_gspread.open(sheet_name).sheet1
-    last_row = load_last_row(sheet_name)  # Load last_row from file
+    last_row = load_last_row(sheet_name)  # Load last_row from MongoDB
     await bot.wait_until_ready()
     channel = bot.get_channel(channel_id)
 
@@ -97,7 +88,7 @@ async def check_new_responses(sheet_name, channel_id):
         if len(rows) > last_row:
             new_data = rows[last_row:]  # Get new rows
             last_row = len(rows)  # Update last seen row
-            save_last_row(sheet_name, last_row)  # Save last_row to file
+            save_last_row(sheet_name, last_row)  # Save last_row to MongoDB
 
             for row in new_data:
                 embed = discord.Embed(
@@ -149,7 +140,7 @@ async def add_form(ctx, sheet_name: str, channel_id: int):
 
     form_channels[sheet_name] = channel_id
     print(f"🔹 form_channels updated: {form_channels}")  # Debugging
-    save_form_channels()
+    save_form_channels(form_channels)
     bot.loop.create_task(check_new_responses(sheet_name, channel_id))
     await ctx.send(f"Started tracking form '{sheet_name}' in channel <#{channel_id}>.")
 
@@ -161,7 +152,7 @@ async def remove_form(ctx, sheet_name: str):
         return
     del form_channels[sheet_name]
     print(f"🔹 form_channels updated: {form_channels}")  # Debugging
-    save_form_channels()
+    save_form_channels(form_channels)
     await ctx.send(f"Stopped tracking form '{sheet_name}'.")
 
 @bot.command(name="list_forms")
