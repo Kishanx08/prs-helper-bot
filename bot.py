@@ -8,13 +8,12 @@ import threading
 from flask import Flask
 from discord.ext import commands
 from google.oauth2.service_account import Credentials
-from urllib.parse import quote_plus  # Add this import
+from urllib.parse import quote_plus  # Import this for URL encoding
 
-# Load credentials from Replit Secrets (or Render Environment Variables)
+# Load credentials from environment variables 
 creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 if not creds_json:
     raise ValueError("🚨 Google Service Account JSON is missing! Add it in Replit Secrets.")
-
 creds_dict = json.loads(creds_json)
 
 # Authenticate with Google Sheets
@@ -24,13 +23,11 @@ scopes = [
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/drive.file"
 ]
-
 creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
 client_gspread = gspread.authorize(creds)  # Initialize client_gspread
 
 # Discord Bot Setup
 TOKEN = os.getenv("DISCORD_TOKEN")  # Ensure the correct env variable name
-
 if TOKEN is None:
     raise ValueError("DISCORD_TOKEN is not set!")
 
@@ -43,9 +40,9 @@ MONGO_URI = os.getenv("MONGO_URI")
 
 # Encode the username and password in the MongoDB URI
 if MONGO_URI:
-    # Extract the username and password from the URI
-    uri_parts = MONGO_URI.split('@')
-    userinfo = uri_parts[0].split('//')[1]
+    # Extract the scheme and the rest of the URI
+    scheme_and_userinfo, host_and_db = MONGO_URI.split('@')
+    scheme, userinfo = scheme_and_userinfo.split('//')
     username, password = userinfo.split(':')
     
     # Encode the username and password
@@ -53,8 +50,8 @@ if MONGO_URI:
     encoded_password = quote_plus(password)
     
     # Reconstruct the URI with encoded credentials
-    userinfo_encoded = f"{encoded_username}:{encoded_password}"
-    MONGO_URI = MONGO_URI.replace(userinfo, userinfo_encoded)
+    encoded_userinfo = f"{encoded_username}:{encoded_password}"
+    MONGO_URI = f"{scheme}//{encoded_userinfo}@{host_and_db}"
 
 client = MongoClient(MONGO_URI)
 db = client['prs-helper-bot']  # Replace with your database name
@@ -197,7 +194,7 @@ async def list_forms(ctx):
 async def ping(ctx):
     await ctx.send("Pong! 🏓")
 
-# Flask Web Server to Keep Replit Alive
+# Flask Web Server to Keep the Bot Alive on Render
 app = Flask(__name__)
 
 @app.route("/")
