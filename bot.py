@@ -2,14 +2,15 @@ import discord
 import gspread
 import asyncio
 import os
-import json  # Add this line to import the json module
+import json
 from pymongo import MongoClient
 import threading
 from flask import Flask
 from discord.ext import commands
 from google.oauth2.service_account import Credentials
+from urllib.parse import quote_plus  # Add this import
 
-# Load credentials from Replit Secrets
+# Load credentials from Replit Secrets (or Render Environment Variables)
 creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 if not creds_json:
     raise ValueError("🚨 Google Service Account JSON is missing! Add it in Replit Secrets.")
@@ -39,6 +40,22 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # MongoDB Setup
 MONGO_URI = os.getenv("MONGO_URI")
+
+# Encode the username and password in the MongoDB URI
+if MONGO_URI:
+    # Extract the username and password from the URI
+    uri_parts = MONGO_URI.split('@')
+    userinfo = uri_parts[0].split('//')[1]
+    username, password = userinfo.split(':')
+    
+    # Encode the username and password
+    encoded_username = quote_plus(username)
+    encoded_password = quote_plus(password)
+    
+    # Reconstruct the URI with encoded credentials
+    userinfo_encoded = f"{encoded_username}:{encoded_password}"
+    MONGO_URI = MONGO_URI.replace(userinfo, userinfo_encoded)
+
 client = MongoClient(MONGO_URI)
 db = client['prs-helper-bot']  # Replace with your database name
 form_channels_collection = db['form_channels']
