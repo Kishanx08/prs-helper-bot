@@ -61,10 +61,10 @@ def load_last_row(sheet_name):
     except FileNotFoundError:
         return 1
 
-def save_last_row():
-    with open("last_row.json", "w") as file:
-        json.dump(last_row_data, file, indent=4)
-    print("✅ last_row.json saved:", last_row_data)  # Debugging
+def save_last_row(sheet_name, last_row):
+    with open(f'{sheet_name}_last_row.json', "w") as file:
+        json.dump({"last_row": last_row}, file, indent=4)
+    print(f"✅ {sheet_name}_last_row.json saved:", {"last_row": last_row})  # Debugging
     
 async def check_new_responses(sheet_name, channel_id):
     worksheet = client_gspread.open(sheet_name).sheet1
