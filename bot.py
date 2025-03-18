@@ -2,6 +2,7 @@ import discord
 import gspread
 import asyncio
 import os
+import json  # Add this line to import the json module
 from pymongo import MongoClient
 import threading
 from flask import Flask
