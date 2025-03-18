@@ -38,13 +38,12 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # MongoDB Setup
 MONGO_URI = os.getenv("MONGO_URI")
 
-# Encode the username and password in the MongoDB URI
 if MONGO_URI:
     try:
         # Split the URI into parts
-        scheme, rest = MONGO_URI.split("://")
-        userinfo, host_and_db = rest.split("@", 1)
-        username, password = userinfo.split(":", 1)
+        scheme, rest = MONGO_URI.split("://", 1)  # Split on the first occurrence of "://"
+        userinfo, host_and_db = rest.split("@", 1)  # Split on the first occurrence of "@"
+        username, password = userinfo.split(":", 1)  # Split on the first occurrence of ":"
 
         # Encode the username and password
         encoded_username = quote_plus(username)  # Encodes special characters like '-'
@@ -58,9 +57,10 @@ if MONGO_URI:
     except Exception as e:
         raise ValueError(f"Invalid MONGO_URI format: {e}")
 
+# Connect to MongoDB
 client = MongoClient(MONGO_URI)
-db = client['prs-helpter']  # Replace with your database name
-form_channels_collection = db['form_channels']
+db = client['prs-helpter']  # Corrected database name
+form_channels_collection = db['form_channels']  # Collection name
 
 # Load form_channels from MongoDB
 def load_form_channels():
