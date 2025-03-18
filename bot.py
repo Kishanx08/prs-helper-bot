@@ -41,15 +41,16 @@ form_channels = {}
 # Load form_channels from file
 def load_form_channels():
     try:
-        with open('form_channels.json', 'r') as f:
+        with open('form_channels.json', 'r') as file:
             return json.load(f)
     except FileNotFoundError:
         return {}
 
 # Save form_channels to file
 def save_form_channels():
-    with open('form_channels.json', 'w') as f:
-        json.dump(form_channels, f)
+    with open("form_channels.json", "w") as file:
+        json.dump(form_channels, file, indent=4)
+    print("✅ form_channels.json saved:", forms)  # Debugging
 
 form_channels = load_form_channels()
 
@@ -60,10 +61,11 @@ def load_last_row(sheet_name):
     except FileNotFoundError:
         return 1
 
-def save_last_row(sheet_name, last_row):
-    with open(f'{sheet_name}_last_row.json', 'w') as f:
-        json.dump({'last_row': last_row}, f)
-
+def save_last_row():
+    with open("last_row.json", "w") as file:
+        json.dump(last_row_data, file, indent=4)
+    print("✅ last_row.json saved:", last_row_data)  # Debugging
+    
 async def check_new_responses(sheet_name, channel_id):
     worksheet = client_gspread.open(sheet_name).sheet1
     last_row = load_last_row(sheet_name)  # Load last_row from file
