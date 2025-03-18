@@ -107,6 +107,7 @@ async def check_new_responses(sheet_name, channel_id):
 @bot.event
 async def on_ready():
     print(f'✅ Logged in as {bot.user}')
+    print(f'🔹 Registered commands: {list(bot.commands)}')  # Debugging
 
 @bot.command(name="add_form")
 async def add_form(ctx, sheet_name: str, channel_id: int):
@@ -143,7 +144,11 @@ async def list_forms(ctx):
     if not form_channels:
         await ctx.send("No forms are currently being tracked.")
         return
-    
+        
+@bot.command(name="ping")
+async def ping(ctx):
+    await ctx.send("Pong! 🏓")
+
     embed = discord.Embed(
         title="📋 Tracked Forms",
         color=discord.Color.blue()
