@@ -85,7 +85,7 @@ def save_last_row(sheet_name, last_row):
         print(f"✅ {sheet_name}_last_row.json saved:", {"last_row": last_row})  # Debugging
     except Exception as e:
         print(f"⚠️ Error saving {sheet_name}_last_row.json:", str(e))  # Debugging
-    
+
 async def check_new_responses(sheet_name, channel_id):
     worksheet = client_gspread.open(sheet_name).sheet1
     last_row = load_last_row(sheet_name)  # Load last_row from file
@@ -110,7 +110,7 @@ async def check_new_responses(sheet_name, channel_id):
                     embed.add_field(name=f"**{headers[i]}**", value=row[i] if row[i] else "N/A", inline=False)
 
                 embed.set_footer(text="Google Form Auto-Response Bot")
-                
+
                 try:
                     await channel.send(embed=embed)
                     await asyncio.sleep(2)  # Wait 2 seconds before sending the next message
@@ -132,10 +132,11 @@ async def on_ready():
 
 @bot.command(name="add_form")
 async def add_form(ctx, sheet_name: str, channel_id: int):
+    print(f"🔹 add_form called with sheet_name: {sheet_name}, channel_id: {channel_id}")  # Debugging
     if sheet_name in form_channels:
         await ctx.send(f"Form '{sheet_name}' is already being tracked.")
         return
-    
+
     try:
         # Try to open the worksheet to check if it exists
         worksheet = client_gspread.open(sheet_name).sheet1
@@ -145,23 +146,27 @@ async def add_form(ctx, sheet_name: str, channel_id: int):
     except Exception as e:
         await ctx.send(f"An error occurred: {str(e)}")
         return
-    
+
     form_channels[sheet_name] = channel_id
+    print(f"🔹 form_channels updated: {form_channels}")  # Debugging
     save_form_channels()
     bot.loop.create_task(check_new_responses(sheet_name, channel_id))
     await ctx.send(f"Started tracking form '{sheet_name}' in channel <#{channel_id}>.")
 
 @bot.command(name="remove_form")
 async def remove_form(ctx, sheet_name: str):
+    print(f"🔹 remove_form called with sheet_name: {sheet_name}")  # Debugging
     if sheet_name not in form_channels:
         await ctx.send(f"Form '{sheet_name}' is not being tracked.")
         return
     del form_channels[sheet_name]
+    print(f"🔹 form_channels updated: {form_channels}")  # Debugging
     save_form_channels()
     await ctx.send(f"Stopped tracking form '{sheet_name}'.")
 
 @bot.command(name="list_forms")
 async def list_forms(ctx):
+    print("🔹 list_forms called")  # Debugging
     if not form_channels:
         await ctx.send("No forms are currently being tracked.")
         return
@@ -170,13 +175,14 @@ async def list_forms(ctx):
         title="📋 Tracked Forms",
         color=discord.Color.blue()
     )
-    
+
     for sheet_name, channel_id in form_channels.items():
         channel = bot.get_channel(channel_id)
         channel_mention = channel.mention if channel else f"Channel ID: {channel_id}"
         embed.add_field(name=sheet_name, value=channel_mention, inline=False)
-    
+
     await ctx.send(embed=embed)
+    print("🔹 Sent tracked forms list")  # Debugging
 
 @bot.command(name="ping")
 async def ping(ctx):
