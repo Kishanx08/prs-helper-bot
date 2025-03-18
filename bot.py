@@ -41,30 +41,42 @@ form_channels = {}
 # Load form_channels from file
 def load_form_channels():
     try:
-        with open("form_channels.json", "r") as f:  # ✅ Define 'f' inside 'with open'
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}  # Return an empty dictionary if the file doesn't exist or has invalid JSO
+        with open("form_channels.json", "r") as file:
+            data = json.load(file)
+            print("✅ form_channels.json loaded:", data)  # Debugging
+            return data
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print("⚠️ Error loading form_channels.json:", str(e))  # Debugging
+        return {}  # Return an empty dictionary if file not found or invalid JSON
 
 # Save form_channels to file
 def save_form_channels():
-    with open("form_channels.json", "w") as file:
-        json.dump(form_channels, file, indent=4)
-    print("✅ form_channels.json saved:", form_channels)  # Debugging
+    try:
+        with open("form_channels.json", "w") as file:
+            json.dump(form_channels, file, indent=4)
+        print("✅ form_channels.json saved:", form_channels)  # Debugging
+    except Exception as e:
+        print("⚠️ Error saving form_channels.json:", str(e))  # Debugging
 
 form_channels = load_form_channels()
 
 def load_last_row(sheet_name):
     try:
         with open(f'{sheet_name}_last_row.json', 'r') as file:
-            return json.load(f).get('last_row', 1)
-    except FileNotFoundError:
+            data = json.load(file).get('last_row', 1)
+            print(f"✅ {sheet_name}_last_row.json loaded:", data)  # Debugging
+            return data
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"⚠️ Error loading {sheet_name}_last_row.json:", str(e))  # Debugging
         return 1
 
 def save_last_row(sheet_name, last_row):
-    with open(f'{sheet_name}_last_row.json', "w") as file:
-        json.dump({"last_row": last_row}, file, indent=4)
-    print(f"✅ {sheet_name}_last_row.json saved:", {"last_row": last_row})  # Debugging
+    try:
+        with open(f'{sheet_name}_last_row.json', "w") as file:
+            json.dump({"last_row": last_row}, file, indent=4)
+        print(f"✅ {sheet_name}_last_row.json saved:", {"last_row": last_row})  # Debugging
+    except Exception as e:
+        print(f"⚠️ Error saving {sheet_name}_last_row.json:", str(e))  # Debugging
     
 async def check_new_responses(sheet_name, channel_id):
     worksheet = client_gspread.open(sheet_name).sheet1
@@ -83,7 +95,6 @@ async def check_new_responses(sheet_name, channel_id):
                 embed = discord.Embed(
                     title="📝 New Google Form Response",
                     color=discord.Color.blue()  # Changed to blue color
-
                 )
 
                 headers = worksheet.row_values(1)  # Get column headers
@@ -146,10 +157,6 @@ async def list_forms(ctx):
     if not form_channels:
         await ctx.send("No forms are currently being tracked.")
         return
-        
-@bot.command(name="ping")
-async def ping(ctx):
-    await ctx.send("Pong! 🏓")
 
     embed = discord.Embed(
         title="📋 Tracked Forms",
@@ -162,6 +169,10 @@ async def ping(ctx):
         embed.add_field(name=sheet_name, value=channel_mention, inline=False)
     
     await ctx.send(embed=embed)
+
+@bot.command(name="ping")
+async def ping(ctx):
+    await ctx.send("Pong! 🏓")
 
 # Flask Web Server to Keep Replit Alive
 app = Flask(__name__)
