@@ -40,17 +40,23 @@ MONGO_URI = os.getenv("MONGO_URI")
 
 # Encode the username and password in the MongoDB URI
 if MONGO_URI:
-    # Extract the scheme and user info, and the host and db info
-    scheme_and_userinfo, host_and_db = MONGO_URI.split('//')[1].split('@', 1)
-    username, password = scheme_and_userinfo.split(':')
+    try:
+        # Split the URI into parts
+        scheme, rest = MONGO_URI.split("://")
+        userinfo, host_and_db = rest.split("@", 1)
+        username, password = userinfo.split(":", 1)
 
-    # Encode the username and password
-    encoded_username = quote_plus(username)
-    encoded_password = quote_plus(password)
-    
-    # Reconstruct the URI with encoded credentials
-    encoded_userinfo = f"{encoded_username}:{encoded_password}"
-    MONGO_URI = f"mongodb://{encoded_userinfo}@{host_and_db}"
+        # Encode the username and password
+        encoded_username = quote_plus(username)  # Encodes special characters like '-'
+        encoded_password = quote_plus(password)  # Encodes special characters like '@'
+
+        # Reconstruct the URI with encoded credentials
+        encoded_userinfo = f"{encoded_username}:{encoded_password}"
+        MONGO_URI = f"{scheme}://{encoded_userinfo}@{host_and_db}"
+
+        print(f"Reconstructed MONGO_URI: {MONGO_URI}")  # Debugging
+    except Exception as e:
+        raise ValueError(f"Invalid MONGO_URI format: {e}")
 
 client = MongoClient(MONGO_URI)
 db = client['prs-helper-bot']  # Replace with your database name
