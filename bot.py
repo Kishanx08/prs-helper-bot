@@ -59,7 +59,7 @@ if MONGO_URI:
 
 # Connect to MongoDB
 client = MongoClient(MONGO_URI)
-db = client['prs-helpter']  # Corrected database name
+db = client['prs-helper-bot']  # Corrected database name
 form_channels_collection = db['form_channels']  # Collection name
 
 # Load form_channels from MongoDB
