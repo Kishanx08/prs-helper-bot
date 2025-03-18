@@ -47,7 +47,11 @@ def load_form_channels():
             return data
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print("⚠️ Error loading form_channels.json:", str(e))  # Debugging
-        return {}  # Return an empty dictionary if file not found or invalid JSON
+        # Initialize the file with an empty JSON object if it doesn't exist or is invalid
+        with open("form_channels.json", "w") as file:
+            json.dump({}, file, indent=4)
+        print("✅ Initialized form_channels.json with an empty dictionary")  # Debugging
+        return {}  # Return an empty dictionary
 
 # Save form_channels to file
 def save_form_channels():
@@ -68,6 +72,10 @@ def load_last_row(sheet_name):
             return data
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(f"⚠️ Error loading {sheet_name}_last_row.json:", str(e))  # Debugging
+        # Initialize the file with the default last row if it doesn't exist or is invalid
+        with open(f'{sheet_name}_last_row.json', "w") as file:
+            json.dump({"last_row": 1}, file, indent=4)
+        print(f"✅ Initialized {sheet_name}_last_row.json with last_row: 1")  # Debugging
         return 1
 
 def save_last_row(sheet_name, last_row):
