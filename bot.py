@@ -1,201 +1,266 @@
-import discord
-import gspread
-import asyncio
-import os
-import json
-from pymongo import MongoClient
-import threading
-from flask import Flask
-from discord.ext import commands
-from google.oauth2.service_account import Credentials
+require('dotenv').config();
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const { google } = require('googleapis');
+const { authenticate } = require('@google-cloud/local-auth');
+const { MongoClient } = require('mongodb');
+const express = require('express');
+const path = require('path');
 
-# Load credentials from environment variables
-creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-if not creds_json:
-    raise ValueError("🚨 Google Service Account JSON is missing! Add it in Replit Secrets.")
-creds_dict = json.loads(creds_json)
+// Load environment variables
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const GOOGLE_SERVICE_ACCOUNT_JSON = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+const MONGO_URI = process.env.MONGO_URI;
+const ERROR_CHANNEL_ID = process.env.ERROR_CHANNEL_ID; // Channel to send error notifications
 
-# Authenticate with Google Sheets
-scopes = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
-    "https://www.googleapis.com/auth/drive",
-    "https://www.googleapis.com/auth/drive.file"
-]
-creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-client_gspread = gspread.authorize(creds)  # Initialize client_gspread
+if (!DISCORD_TOKEN || !GOOGLE_SERVICE_ACCOUNT_JSON || !MONGO_URI) {
+  throw new Error('Missing environment variables!');
+}
 
-# Discord Bot Setup
-TOKEN = os.getenv("DISCORD_TOKEN")  # Ensure the correct env variable name
-if TOKEN is None:
-    raise ValueError("DISCORD_TOKEN is not set!")
+// Discord bot setup
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+});
 
-intents = discord.Intents.default()
-intents.message_content = True  # Enable message content intent
-bot = commands.Bot(command_prefix="!", intents=intents)
+// Google Sheets setup
+const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
+const CREDENTIALS_PATH = path.resolve(__dirname, 'credentials.json');
 
-# MongoDB Setup
-MONGO_URI = os.getenv("MONGO_URI")
+// MongoDB setup
+const mongoClient = new MongoClient(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true });
+let db, formChannelsCollection, lastRowsCollection;
 
-if not MONGO_URI:
-    raise ValueError("MONGO_URI is not set!")
+// Load form_channels from MongoDB
+async function loadFormChannels() {
+  try {
+    const formChannels = new Map();
+    const documents = await formChannelsCollection.find().toArray();
+    documents.forEach(doc => formChannels.set(doc.sheet_name, doc.channel_id));
+    console.log('✅ Form channels loaded from MongoDB:', formChannels);
+    return formChannels;
+  } catch (error) {
+    console.error('❌ Failed to load form channels:', error);
+    throw error;
+  }
+}
 
-print(f"Using MONGO_URI: {MONGO_URI}")  # Debugging
+// Save form_channels to MongoDB
+async function saveFormChannels(formChannels) {
+  try {
+    await formChannelsCollection.deleteMany({});
+    const documents = Array.from(formChannels.entries()).map(([sheet_name, channel_id]) => ({ sheet_name, channel_id }));
+    if (documents.length > 0) {
+      await formChannelsCollection.insertMany(documents);
+    }
+    console.log('✅ Form channels saved to MongoDB:', formChannels);
+  } catch (error) {
+    console.error('❌ Failed to save form channels:', error);
+    throw error;
+  }
+}
 
-# Connect to MongoDB
-client = MongoClient(MONGO_URI)
-db = client['prs-helpter']  # Corrected database name
-form_channels_collection = db['form_channels']  # Collection name
+// Load last_row from MongoDB
+async function loadLastRow(sheetName) {
+  try {
+    const document = await lastRowsCollection.findOne({ sheet_name: sheetName });
+    return document ? document.last_row : 1;
+  } catch (error) {
+    console.error(`❌ Failed to load last row for ${sheetName}:`, error);
+    throw error;
+  }
+}
 
-# Load form_channels from MongoDB
-def load_form_channels():
-    form_channels = {}
-    for document in form_channels_collection.find():
-        form_channels[document['sheet_name']] = document['channel_id']
-    print("✅ form_channels loaded from MongoDB:", form_channels)  # Debugging
-    return form_channels
+// Save last_row to MongoDB
+async function saveLastRow(sheetName, lastRow) {
+  try {
+    await lastRowsCollection.updateOne(
+      { sheet_name: sheetName },
+      { $set: { last_row: lastRow } },
+      { upsert: true }
+    );
+    console.log(`✅ Last row saved for ${sheetName}:`, lastRow);
+  } catch (error) {
+    console.error(`❌ Failed to save last row for ${sheetName}:`, error);
+    throw error;
+  }
+}
 
-# Save form_channels to MongoDB
-def save_form_channels(form_channels):
-    form_channels_collection.delete_many({})  # Clear existing data
-    for sheet_name, channel_id in form_channels.items():
-        form_channels_collection.insert_one({'sheet_name': sheet_name, 'channel_id': channel_id})
-    print("✅ form_channels saved to MongoDB:", form_channels)  # Debugging
+// Authenticate with Google Sheets API
+async function authorize() {
+  try {
+    const auth = await authenticate({
+      keyfilePath: CREDENTIALS_PATH,
+      scopes: SCOPES,
+    });
+    return google.sheets({ version: 'v4', auth });
+  } catch (error) {
+    console.error('❌ Failed to authenticate with Google Sheets:', error);
+    throw error;
+  }
+}
 
-form_channels = load_form_channels()
+// Fetch responses from Google Sheets
+async function fetchResponses(sheets, sheetName) {
+  try {
+    const range = `${sheetName}!A1:Z`;
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SERVICE_ACCOUNT_JSON.spreadsheet_id,
+      range,
+    });
+    return response.data.values;
+  } catch (error) {
+    console.error(`❌ Failed to fetch responses for ${sheetName}:`, error);
+    throw error;
+  }
+}
 
-def load_last_row(sheet_name):
-    last_row_document = db['last_rows'].find_one({'sheet_name': sheet_name})
-    if last_row_document:
-        last_row = last_row_document.get('last_row', 1)
-        print(f"✅ {sheet_name} last_row loaded from MongoDB:", last_row)  # Debugging
-        return last_row
-    else:
-        print(f"⚠️ {sheet_name} last_row not found, initializing to 1")  # Debugging
-        return 1
+// Send responses to Discord channel
+async function sendResponsesToChannel(channelId, responses) {
+  try {
+    const channel = client.channels.cache.get(channelId);
+    if (!channel) {
+      console.error(`❌ Channel ${channelId} not found.`);
+      return;
+    }
 
-def save_last_row(sheet_name, last_row):
-    db['last_rows'].update_one(
-        {'sheet_name': sheet_name},
-        {'$set': {'last_row': last_row}},
-        upsert=True
-    )
-    print(f"✅ {sheet_name} last_row saved to MongoDB:", {"last_row": last_row})  # Debugging
+    const embed = new EmbedBuilder()
+      .setTitle('📝 New Google Form Response')
+      .setColor(0x00FF00);
 
-async def check_new_responses(sheet_name, channel_id):
-    worksheet = client_gspread.open(sheet_name).sheet1
-    last_row = load_last_row(sheet_name)  # Load last_row from MongoDB
-    await bot.wait_until_ready()
-    channel = bot.get_channel(channel_id)
+    responses.forEach(row => {
+      embed.addFields(row.map((value, index) => ({
+        name: `**Field ${index + 1}**`,
+        value: value || 'N/A',
+        inline: false,
+      })));
+    });
 
-    while not bot.is_closed():
-        rows = worksheet.get_all_values()
-        if len(rows) > last_row:
-            new_data = rows[last_row:]  # Get new rows
-            last_row = len(rows)  # Update last seen row
-            save_last_row(sheet_name, last_row)  # Save last_row to MongoDB
+    await channel.send({ embeds: [embed] });
+    console.log(`✅ Sent responses to channel ${channelId}.`);
+  } catch (error) {
+    console.error(`❌ Failed to send responses to channel ${channelId}:`, error);
+    throw error;
+  }
+}
 
-            for row in new_data:
-                embed = discord.Embed(
-                    title="📝 New Google Form Response",
-                    color=discord.Color.blue()  # Changed to blue color
-                )
+// Notify errors to a specific channel
+async function notifyError(errorMessage) {
+  try {
+    if (!ERROR_CHANNEL_ID) return;
+    const channel = client.channels.cache.get(ERROR_CHANNEL_ID);
+    if (!channel) {
+      console.error('❌ Error notification channel not found.');
+      return;
+    }
+    await channel.send(`❌ **Error:** ${errorMessage}`);
+  } catch (error) {
+    console.error('❌ Failed to send error notification:', error);
+  }
+}
 
-                headers = worksheet.row_values(1)  # Get column headers
-                for i in range(len(row)):
-                    embed.add_field(name=f"**{headers[i]}**", value=row[i] if row[i] else "N/A", inline=False)
+// Poll Google Sheets for new responses
+async function pollSheets() {
+  try {
+    const sheets = await authorize();
 
-                embed.set_footer(text="Google Form Auto-Response Bot")
+    for (const [sheetName, channelId] of formChannels.entries()) {
+      try {
+        const responses = await fetchResponses(sheets, sheetName);
+        const lastRow = await loadLastRow(sheetName);
 
-                try:
-                    await channel.send(embed=embed)
-                    await asyncio.sleep(2)  # Wait 2 seconds before sending the next message
-                except discord.errors.HTTPException as e:
-                    if e.status == 429:
-                        retry_after = e.retry_after if hasattr(e, 'retry_after') else 5
-                        print(f"Rate limited: {e}. Retrying in {retry_after} seconds.")
-                        await asyncio.sleep(retry_after)
-                    else:
-                        print(f"An error occurred: {e}")
-                        await asyncio.sleep(5)
+        if (responses && responses.length > lastRow) {
+          const newResponses = responses.slice(lastRow);
+          await sendResponsesToChannel(channelId, newResponses);
+          await saveLastRow(sheetName, responses.length);
+        }
+      } catch (error) {
+        console.error(`❌ Error processing sheet ${sheetName}:`, error);
+        await notifyError(`Error processing sheet ${sheetName}: ${error.message}`);
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error in pollSheets:', error);
+    await notifyError(`Error in pollSheets: ${error.message}`);
+  }
+}
 
-        await asyncio.sleep(60)  # Check every 1 minute
+// Discord bot commands
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isCommand()) return;
 
-@bot.event
-async def on_ready():
-    print(f'✅ Logged in as {bot.user}')
-    print(f'🔹 Registered commands: {list(bot.commands)}')  # Debugging
+  const { commandName, options } = interaction;
 
-@bot.command(name="add_form")
-async def add_form(ctx, sheet_name: str, channel_id: int):
-    print(f"🔹 add_form called with sheet_name: {sheet_name}, channel_id: {channel_id}")  # Debugging
-    if sheet_name in form_channels:
-        await ctx.send(f"Form '{sheet_name}' is already being tracked.")
-        return
+  try {
+    if (commandName === 'addform') {
+      const sheetName = options.getString('sheetname');
+      const channelId = options.getString('channelid');
 
-    try:
-        # Try to open the worksheet to check if it exists
-        worksheet = client_gspread.open(sheet_name).sheet1
-    except gspread.SpreadsheetNotFound:
-        await ctx.send(f"Form '{sheet_name}' does not exist.")
-        return
-    except Exception as e:
-        await ctx.send(f"An error occurred: {str(e)}")
-        return
+      if (formChannels.has(sheetName)) {
+        await interaction.reply(`Form "${sheetName}" is already being tracked.`);
+        return;
+      }
 
-    form_channels[sheet_name] = channel_id
-    print(f"🔹 form_channels updated: {form_channels}")  # Debugging
-    save_form_channels(form_channels)
-    bot.loop.create_task(check_new_responses(sheet_name, channel_id))
-    await ctx.send(f"Started tracking form '{sheet_name}' in channel <#{channel_id}>.")
+      formChannels.set(sheetName, channelId);
+      await saveFormChannels(formChannels);
+      await interaction.reply(`Started tracking form "${sheetName}" in channel <#${channelId}>.`);
+    }
 
-@bot.command(name="remove_form")
-async def remove_form(ctx, sheet_name: str):
-    print(f"🔹 remove_form called with sheet_name: {sheet_name}")  # Debugging
-    if sheet_name not in form_channels:
-        await ctx.send(f"Form '{sheet_name}' is not being tracked.")
-        return
-    del form_channels[sheet_name]
-    print(f"🔹 form_channels updated: {form_channels}")  # Debugging
-    save_form_channels(form_channels)
-    await ctx.send(f"Stopped tracking form '{sheet_name}'.")
+    if (commandName === 'removeform') {
+      const sheetName = options.getString('sheetname');
 
-@bot.command(name="list_forms")
-async def list_forms(ctx):
-    print("🔹 list_forms called")  # Debugging
-    if not form_channels:
-        await ctx.send("No forms are currently being tracked.")
-        return
+      if (!formChannels.has(sheetName)) {
+        await interaction.reply(`Form "${sheetName}" is not being tracked.`);
+        return;
+      }
 
-    embed = discord.Embed(
-        title="📋 Tracked Forms",
-        color=discord.Color.blue()
-    )
+      formChannels.delete(sheetName);
+      await saveFormChannels(formChannels);
+      await interaction.reply(`Stopped tracking form "${sheetName}".`);
+    }
 
-    for sheet_name, channel_id in form_channels.items():
-        channel = bot.get_channel(channel_id)
-        channel_mention = channel.mention if channel else f"Channel ID: {channel_id}"
-        embed.add_field(name=sheet_name, value=channel_mention, inline=False)
+    if (commandName === 'listforms') {
+      const formList = Array.from(formChannels.entries())
+        .map(([sheetName, channelId]) => `${sheetName} -> <#${channelId}>`)
+        .join('\n');
 
-    await ctx.send(embed=embed)
-    print("🔹 Sent tracked forms list")  # Debugging
+      await interaction.reply(`**Tracked Forms:**\n${formList || 'No forms are being tracked.'}`);
+    }
 
-@bot.command(name="ping")
-async def ping(ctx):
-    await ctx.send("Pong! 🏓")
+    if (commandName === 'ping') {
+      await interaction.reply('Pong! 🏓');
+    }
+  } catch (error) {
+    console.error('❌ Error handling command:', error);
+    await interaction.reply('❌ An error occurred while processing your command.');
+    await notifyError(`Error handling command ${commandName}: ${error.message}`);
+  }
+});
 
-# Flask Web Server to Keep the Bot Alive on Render
-app = Flask(__name__)
+// Start the bot
+client.once('ready', async () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
 
-@app.route("/")
-def home():
-    return "✅ Bot is running!"
+  try {
+    // Connect to MongoDB
+    await mongoClient.connect();
+    db = mongoClient.db('prs-helpter');
+    formChannelsCollection = db.collection('form_channels');
+    lastRowsCollection = db.collection('last_rows');
 
-def run_web():
-    app.run(host="0.0.0.0", port=5000)  # Use a different port if needed
+    // Load form channels
+    formChannels = await loadFormChannels();
 
-# Run Flask server in a separate thread
-threading.Thread(target=run_web, daemon=True).start()
+    // Start polling Google Sheets
+    setInterval(pollSheets, 60000); // Poll every 60 seconds
+  } catch (error) {
+    console.error('❌ Error during bot startup:', error);
+    await notifyError(`Error during bot startup: ${error.message}`);
+  }
+});
 
-# Move `bot.run(TOKEN)` to the end, after defining `bot`
-bot.run(TOKEN)
+// Flask-like web server to keep the bot alive
+const app = express();
+app.get('/', (req, res) => res.send('✅ Bot is running!'));
+app.listen(5000, () => console.log('Web server is running on port 5000.'));
+
+// Login to Discord
+client.login(DISCORD_TOKEN);
