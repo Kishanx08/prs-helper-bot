@@ -9,26 +9,6 @@ const commands = [
   {
     name: 'addform',
     description: 'Start tracking a Google Form',
-    options: [
-      {
-        name: 'sheetname',
-        description: 'Name of the Google Sheet',
-        type: 3, // STRING
-        required: true,
-      },
-      {
-        name: 'channelid',
-        description: 'Channel to send responses',
-        type: 3, // STRING
-        required: true,
-      },
-      {
-        name: 'spreadsheetid',
-        description: 'ID of the Google Spreadsheet',
-        type: 3, // STRING
-        required: true,
-      },
-    ],
   },
   {
     name: 'removeform',
@@ -85,7 +65,7 @@ let formChannels = new Map();
 async function initializeDatabase() {
   try {
     await mongoClient.connect();
-    db = mongoClient.db('prs-helpter');
+    db = mongoClient.db('prs-helper');
     
     // Create collections if they don't exist
     const collections = await db.listCollections().toArray();
@@ -126,12 +106,28 @@ async function authorize() {
   }
 }
 
+// Fetch all Google Sheets
+async function fetchAllSheets(sheets) {
+  try {
+    const response = await sheets.spreadsheets.list();
+    if (!response.data.spreadsheets) {
+      throw new Error('No spreadsheets found.');
+    }
+    return response.data.spreadsheets;
+  } catch (error) {
+    console.error('❌ Failed to fetch spreadsheets:', error.message);
+    return [];
+  }
+}
+
 // Fetch responses from Google Sheets
 async function fetchResponses(sheets, spreadsheetId, sheetName) {
   try {
     if (!spreadsheetId) {
       throw new Error('Spreadsheet ID is missing');
     }
+
+    console.log(`Fetching data from sheet: ${sheetName} in spreadsheet: ${spreadsheetId}`);
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -141,6 +137,8 @@ async function fetchResponses(sheets, spreadsheetId, sheetName) {
     if (!response.data.values) {
       throw new Error(`Sheet "${sheetName}" has no data or does not exist.`);
     }
+
+    console.log(`Successfully fetched data from sheet: ${sheetName}`);
 
     return response.data.values;
   } catch (error) {
@@ -233,88 +231,104 @@ async function registerCommands() {
 
 // Discord commands
 client.on('interactionCreate', async interaction => {
-  if (!interaction.isCommand()) return;
+  if (!interaction.isCommand() && !interaction.isMessageComponent()) return;
 
   try {
-    const { commandName, options } = interaction;
+    const { commandName, customId, options } = interaction;
 
     if (commandName === 'addform') {
-  const sheetName = options.getString('sheetname');
-  const channelId = options.getString('channelid');
-  const spreadsheetId = options.getString('spreadsheetid');
+      const sheets = await authorize();
+      const allSheets = await fetchAllSheets(sheets);
+      const sheetNames = allSheets.map(sheet => sheet.properties.title).join('\n');
 
-  // Validate channel ID
-  const channel = client.channels.cache.get(channelId);
-  if (!channel || !channel.isTextBased()) {
-    return interaction.reply(`❌ Invalid channel ID: <#${channelId}>. Please provide a valid text channel ID.`);
-  }
+      await interaction.reply(`Here are the available Google Sheets:\n\n${sheetNames}\n\nPlease type the name of the sheet you want to track.`);
 
-  // Validate spreadsheet ID
-  const sheets = await authorize();
-  try {
-    const spreadsheet = await sheets.spreadsheets.get({
-      spreadsheetId,
-    });
-
-    // Validate sheet name
-    const sheetExists = spreadsheet.data.sheets.some(sheet => sheet.properties.title === sheetName);
-    if (!sheetExists) {
-      // Log available sheet names for debugging
-      const availableSheets = spreadsheet.data.sheets.map(sheet => sheet.properties.title).join(', ');
-      return interaction.reply(`❌ Sheet "${sheetName}" does not exist in the provided spreadsheet. Available sheets: ${availableSheets}`);
+      // Store interaction state
+      interaction.state = { step: 'selectSheet', sheets: allSheets };
     }
-  } catch (error) {
-    return interaction.reply(`❌ Invalid spreadsheet ID or access denied: ${error.message}`);
-  }
 
-  // Check if sheet is already being tracked
-  if (formChannels.has(sheetName)) {
-    return interaction.reply(`⚠️ ${sheetName} is already being tracked`);
-  }
+    if (interaction.state?.step === 'selectSheet' && interaction.isMessage()) {
+      const sheetName = interaction.content.trim();
+      const selectedSheet = interaction.state.sheets.find(sheet => sheet.properties.title === sheetName);
 
-  // Initialize last row
-  const responses = await fetchResponses(sheets, spreadsheetId, sheetName);
-  const initialRow = responses ? responses.length : 0;
+      if (!selectedSheet) {
+        return interaction.reply(`❌ Sheet "${sheetName}" does not exist. Please type a valid sheet name.`);
+      }
 
-  formChannels.set(sheetName, { channelId, spreadsheetId });
-  await formChannelsCollection.insertOne({ sheet_name: sheetName, channel_id: channelId, spreadsheet_id: spreadsheetId });
-  await updateLastRow(sheetName, initialRow);
+      interaction.state.sheetName = sheetName;
+      interaction.state.spreadsheetId = selectedSheet.spreadsheetId;
 
-  interaction.reply(`✅ Now tracking ${sheetName} in <#${channelId}>`);
-}
+      await interaction.reply('Great! Now mention the channel where responses should be sent.');
+      interaction.state.step = 'selectChannel';
+    }
+
+    if (interaction.state?.step === 'selectChannel' && interaction.isMessage()) {
+      const channelId = interaction.content.replace('<#', '').replace('>', '').trim();
+      const channel = client.channels.cache.get(channelId);
+
+      if (!channel || !channel.isTextBased()) {
+        return interaction.reply(`❌ Invalid channel ID: <#${channelId}>. Please provide a valid text channel ID.`);
+      }
+
+      const { sheetName, spreadsheetId } = interaction.state;
+      const sheets = await authorize();
+      const responses = await fetchResponses(sheets, spreadsheetId, sheetName);
+      const initialRow = responses ? responses.length : 0;
+
+      formChannels.set(sheetName, { channelId, spreadsheetId });
+      await formChannelsCollection.insertOne({ sheet_name: sheetName, channel_id: channelId, spreadsheet_id: spreadsheetId });
+      await updateLastRow(sheetName, initialRow);
+
+      interaction.reply(`✅ Now tracking ${sheetName} in <#${channelId}>`);
+      delete interaction.state;
+    }
+
+    if (commandName === 'removeform') {
+      const sheetName = options.getString('sheetname');
+
+      // Check if the sheet is being tracked
+      if (!formChannels.has(sheetName)) {
+        return interaction.reply(`❌ ${sheetName} is not being tracked.`);
+      }
+
+      // Remove the sheet from tracking
+      formChannels.delete(sheetName);
+      await formChannelsCollection.deleteOne({ sheet_name: sheetName });
+
+      interaction.reply(`✅ Stopped tracking ${sheetName}.`);
+    }
 
     if (commandName === 'listforms') {
-  const list = Array.from(formChannels)
-    .map(([name, { channelId }]) => `• ${name} → <#${channelId}>`)
-    .join('\n') || 'No forms are being tracked';
+      const list = Array.from(formChannels)
+        .map(([name, { channelId }]) => `• ${name} → <#${channelId}>`)
+        .join('\n') || 'No forms are being tracked';
 
-  interaction.reply(`📋 Tracked Forms:\n${list}`);
-}
+      interaction.reply(`📋 Tracked Forms:\n${list}`);
+    }
 
-if (commandName === 'ping') {
-  // Calculate bot latency
-  const startTime = Date.now();
-  await interaction.deferReply(); // Acknowledge the interaction
-  const latency = Date.now() - startTime;
+    if (commandName === 'ping') {
+      // Calculate bot latency
+      const startTime = Date.now();
+      await interaction.deferReply(); // Acknowledge the interaction
+      const latency = Date.now() - startTime;
 
-  // Test Google Sheets API
-  let sheetsStatus = '✅ Google Sheets API is working';
-  try {
-    const sheets = await authorize();
-    await sheets.spreadsheets.values.get({
-  spreadsheetId: '1GxRAedaT2dGYjf1TurrCxLk98vnVeN_Cffs848tD5RM', // Use a dummy ID to test the API
-  range: 'Sheet1!A:Z',
-});
-    
-  } catch (error) {
-    sheetsStatus = '❌ Google Sheets API is not working';
-  }
+      // Test Google Sheets API
+      let sheetsStatus = '✅ Google Sheets API is working';
+      try {
+        const sheets = await authorize();
+        await sheets.spreadsheets.values.get({
+          spreadsheetId: '1GxRAedaT2dGYjf1TurrCxLk98vnVeN_Cffs848tD5RM', // Use a dummy ID to test the API
+          range: 'Sheet1!A:Z',
+        });
+      } catch (error) {
+        sheetsStatus = '❌ Google Sheets API is not working';
+      }
 
-  // Send response
-  await interaction.editReply({
-    content: `🏓 Pong!\n- Bot Latency: ${latency}ms\n- ${sheetsStatus}`,
-  });
-}
+      // Send response
+      await interaction.editReply({
+        content: `🏓 Pong!\n- Bot Latency: ${latency}ms\n- ${sheetsStatus}`,
+      });
+    }
   } catch (error) {
     console.error('❌ Command error:', error);
     interaction.reply('⚠️ An error occurred');
