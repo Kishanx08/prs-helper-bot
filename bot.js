@@ -4,6 +4,45 @@ const { google } = require('googleapis');
 const { MongoClient } = require('mongodb');
 const express = require('express');
 const path = require('path');
+const { REST, Routes } = require('discord.js');
+
+// Define your slash commands
+const commands = [
+  {
+    name: 'addform',
+    description: 'Start tracking a Google Form',
+    options: [
+      {
+        name: 'sheetname',
+        description: 'Name of the Google Sheet',
+        type: 3, // STRING
+        required: true,
+      },
+      {
+        name: 'channelid',
+        description: 'Channel to send responses',
+        type: 3, // STRING
+        required: true,
+      },
+    ],
+  },
+  {
+    name: 'removeform',
+    description: 'Stop tracking a Google Form',
+    options: [
+      {
+        name: 'sheetname',
+        description: 'Name of the Google Sheet',
+        type: 3, // STRING
+        required: true,
+      },
+    ],
+  },
+  {
+    name: 'listforms',
+    description: 'List all tracked forms',
+  },
+];
 
 // Verify environment variables
 const REQUIRED_ENV = ['DISCORD_TOKEN', 'GOOGLE_SERVICE_ACCOUNT_JSON', 'MONGO_URI'];
@@ -159,6 +198,22 @@ async function pollSheets() {
   }
 }
 
+// Register slash commands
+async function registerCommands() {
+  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+
+  try {
+    console.log('🔧 Registering slash commands...');
+    await rest.put(
+      Routes.applicationCommands(client.user.id), // Register globally
+      { body: commands }
+    );
+    console.log('✅ Slash commands registered successfully!');
+  } catch (error) {
+    console.error('❌ Failed to register commands:', error);
+  }
+}
+
 // Discord commands
 client.on('interactionCreate', async interaction => {
   if (!interaction.isCommand()) return;
@@ -217,6 +272,7 @@ client.on('interactionCreate', async interaction => {
 client.once('ready', async () => {
   console.log(`✅ Bot logged in as ${client.user.tag}`);
   await initializeDatabase();
+  await registerCommands(); // <-- Add this line
   setInterval(pollSheets, 60000); // Check every minute
 });
 
