@@ -316,10 +316,10 @@ if (commandName === 'ping') {
   try {
     const sheets = await authorize();
     await sheets.spreadsheets.values.get({
-      spreadsheetId: '1GxRAedaT2dGYjf1TurrCxLk98vnVeN_Cffs848tD5RM'
-', // Use a dummy ID to test the API
-      range: 'Sheet1!A:Z',
-    });
+  spreadsheetId: '1GxRAedaT2dGYjf1TurrCxLk98vnVeN_Cffs848tD5RM', // Use a dummy ID to test the API
+  range: 'Sheet1!A:Z',
+});
+    
   } catch (error) {
     sheetsStatus = '❌ Google Sheets API is not working';
   }
