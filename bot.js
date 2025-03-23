@@ -1,99 +1,80 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const { google } = require('googleapis');
-const { authenticate } = require('@google-cloud/local-auth');
 const { MongoClient } = require('mongodb');
 const express = require('express');
 const path = require('path');
 
-// Load environment variables
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const GOOGLE_SERVICE_ACCOUNT_JSON = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-const MONGO_URI = process.env.MONGO_URI;
-const ERROR_CHANNEL_ID = process.env.ERROR_CHANNEL_ID; // Channel to send error notifications
+// Verify environment variables
+const REQUIRED_ENV = ['DISCORD_TOKEN', 'GOOGLE_SERVICE_ACCOUNT_JSON', 'MONGO_URI'];
+REQUIRED_ENV.forEach(variable => {
+  if (!process.env[variable]) throw new Error(`Missing ${variable} in .env file`);
+});
 
-if (!DISCORD_TOKEN || !GOOGLE_SERVICE_ACCOUNT_JSON || !MONGO_URI) {
-  throw new Error('Missing environment variables!');
-}
-
-// Discord bot setup
+// Initialize Discord client
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
 // Google Sheets setup
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
-const CREDENTIALS_PATH = path.resolve(__dirname, 'credentials.json');
+const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
 
 // MongoDB setup
-const mongoClient = new MongoClient(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true });
+const mongoClient = new MongoClient(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+});
+
+// Global variables
 let db, formChannelsCollection, lastRowsCollection;
+let formChannels = new Map();
 
-// Load form_channels from MongoDB
-async function loadFormChannels() {
+// Initialize MongoDB collections
+async function initializeDatabase() {
   try {
-    const formChannels = new Map();
-    const documents = await formChannelsCollection.find().toArray();
-    documents.forEach(doc => formChannels.set(doc.sheet_name, doc.channel_id));
-    console.log('✅ Form channels loaded from MongoDB:', formChannels);
-    return formChannels;
-  } catch (error) {
-    console.error('❌ Failed to load form channels:', error);
-    throw error;
-  }
-}
-
-// Save form_channels to MongoDB
-async function saveFormChannels(formChannels) {
-  try {
-    await formChannelsCollection.deleteMany({});
-    const documents = Array.from(formChannels.entries()).map(([sheet_name, channel_id]) => ({ sheet_name, channel_id }));
-    if (documents.length > 0) {
-      await formChannelsCollection.insertMany(documents);
+    await mongoClient.connect();
+    db = mongoClient.db('prs-helpter');
+    
+    // Create collections if they don't exist
+    const collections = await db.listCollections().toArray();
+    if (!collections.some(c => c.name === 'form_channels')) {
+      await db.createCollection('form_channels');
     }
-    console.log('✅ Form channels saved to MongoDB:', formChannels);
+    if (!collections.some(c => c.name === 'last_rows')) {
+      await db.createCollection('last_rows');
+    }
+    
+    formChannelsCollection = db.collection('form_channels');
+    lastRowsCollection = db.collection('last_rows');
+    
+    // Load existing mappings
+    const docs = await formChannelsCollection.find().toArray();
+    formChannels = new Map(docs.map(doc => [doc.sheet_name, doc.channel_id]));
+    
+    console.log('✅ MongoDB initialized successfully');
   } catch (error) {
-    console.error('❌ Failed to save form channels:', error);
-    throw error;
+    console.error('❌ MongoDB initialization failed:', error);
+    process.exit(1);
   }
 }
 
-// Load last_row from MongoDB
-async function loadLastRow(sheetName) {
-  try {
-    const document = await lastRowsCollection.findOne({ sheet_name: sheetName });
-    return document ? document.last_row : 1;
-  } catch (error) {
-    console.error(`❌ Failed to load last row for ${sheetName}:`, error);
-    throw error;
-  }
-}
-
-// Save last_row to MongoDB
-async function saveLastRow(sheetName, lastRow) {
-  try {
-    await lastRowsCollection.updateOne(
-      { sheet_name: sheetName },
-      { $set: { last_row: lastRow } },
-      { upsert: true }
-    );
-    console.log(`✅ Last row saved for ${sheetName}:`, lastRow);
-  } catch (error) {
-    console.error(`❌ Failed to save last row for ${sheetName}:`, error);
-    throw error;
-  }
-}
-
-// Authenticate with Google Sheets API
+// Google Sheets authentication
 async function authorize() {
   try {
-    const auth = await authenticate({
-      keyfilePath: CREDENTIALS_PATH,
-      scopes: SCOPES,
+    const auth = new google.auth.JWT({
+      email: serviceAccount.client_email,
+      key: serviceAccount.private_key,
+      scopes: SCOPES
     });
+    await auth.authorize();
     return google.sheets({ version: 'v4', auth });
   } catch (error) {
-    console.error('❌ Failed to authenticate with Google Sheets:', error);
+    console.error('❌ Google Sheets auth failed:', error);
     throw error;
   }
 }
@@ -101,166 +82,150 @@ async function authorize() {
 // Fetch responses from Google Sheets
 async function fetchResponses(sheets, sheetName) {
   try {
-    const range = `${sheetName}!A1:Z`;
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SERVICE_ACCOUNT_JSON.spreadsheet_id,
-      range,
+      spreadsheetId: serviceAccount.spreadsheet_id,
+      range: `${sheetName}!A:Z`
     });
-    return response.data.values;
+    return response.data.values || [];
   } catch (error) {
-    console.error(`❌ Failed to fetch responses for ${sheetName}:`, error);
-    throw error;
+    console.error(`❌ Failed to fetch ${sheetName}:`, error);
+    return null;
   }
 }
 
-// Send responses to Discord channel
-async function sendResponsesToChannel(channelId, responses) {
+// Save last processed row
+async function updateLastRow(sheetName, row) {
+  try {
+    await lastRowsCollection.updateOne(
+      { sheet_name: sheetName },
+      { $set: { last_row: row } },
+      { upsert: true }
+    );
+  } catch (error) {
+    console.error(`❌ Failed to update last row for ${sheetName}:`, error);
+  }
+}
+
+// Send responses to Discord
+async function sendResponses(channelId, responses) {
   try {
     const channel = client.channels.cache.get(channelId);
     if (!channel) {
-      console.error(`❌ Channel ${channelId} not found.`);
+      console.error(`❌ Channel ${channelId} not found`);
       return;
     }
 
-    const embed = new EmbedBuilder()
-      .setTitle('📝 New Google Form Response')
-      .setColor(0x00FF00);
+    for (const response of responses) {
+      const embed = new EmbedBuilder()
+        .setTitle('📝 New Form Response')
+        .setColor(0x00FF00)
+        .addFields(response.map((value, index) => ({
+          name: `Field ${index + 1}`,
+          value: value.substring(0, 1000) || 'N/A',
+          inline: false
+        })));
 
-    responses.forEach(row => {
-      embed.addFields(row.map((value, index) => ({
-        name: `**Field ${index + 1}**`,
-        value: value || 'N/A',
-        inline: false,
-      })));
-    });
-
-    await channel.send({ embeds: [embed] });
-    console.log(`✅ Sent responses to channel ${channelId}.`);
-  } catch (error) {
-    console.error(`❌ Failed to send responses to channel ${channelId}:`, error);
-    throw error;
-  }
-}
-
-// Notify errors to a specific channel
-async function notifyError(errorMessage) {
-  try {
-    if (!ERROR_CHANNEL_ID) return;
-    const channel = client.channels.cache.get(ERROR_CHANNEL_ID);
-    if (!channel) {
-      console.error('❌ Error notification channel not found.');
-      return;
+      await channel.send({ embeds: [embed] });
     }
-    await channel.send(`❌ **Error:** ${errorMessage}`);
   } catch (error) {
-    console.error('❌ Failed to send error notification:', error);
+    console.error(`❌ Failed to send to ${channelId}:`, error);
   }
 }
 
-// Poll Google Sheets for new responses
+// Check for new responses every 60 seconds
 async function pollSheets() {
   try {
     const sheets = await authorize();
-
-    for (const [sheetName, channelId] of formChannels.entries()) {
+    
+    for (const [sheetName, channelId] of formChannels) {
       try {
         const responses = await fetchResponses(sheets, sheetName);
-        const lastRow = await loadLastRow(sheetName);
+        if (!responses || responses.length < 1) continue;
 
-        if (responses && responses.length > lastRow) {
-          const newResponses = responses.slice(lastRow);
-          await sendResponsesToChannel(channelId, newResponses);
-          await saveLastRow(sheetName, responses.length);
+        const lastRowDoc = await lastRowsCollection.findOne({ sheet_name: sheetName });
+        const lastProcessedRow = lastRowDoc ? lastRowDoc.last_row : 0;
+        
+        if (responses.length > lastProcessedRow) {
+          const newResponses = responses.slice(lastProcessedRow);
+          await sendResponses(channelId, newResponses);
+          await updateLastRow(sheetName, responses.length);
         }
       } catch (error) {
-        console.error(`❌ Error processing sheet ${sheetName}:`, error);
-        await notifyError(`Error processing sheet ${sheetName}: ${error.message}`);
+        console.error(`❌ Error processing ${sheetName}:`, error);
       }
     }
   } catch (error) {
-    console.error('❌ Error in pollSheets:', error);
-    await notifyError(`Error in pollSheets: ${error.message}`);
+    console.error('❌ Polling failed:', error);
   }
 }
 
-// Discord bot commands
-client.on('interactionCreate', async (interaction) => {
+// Discord commands
+client.on('interactionCreate', async interaction => {
   if (!interaction.isCommand()) return;
 
-  const { commandName, options } = interaction;
-
   try {
+    const { commandName, options } = interaction;
+
     if (commandName === 'addform') {
       const sheetName = options.getString('sheetname');
       const channelId = options.getString('channelid');
 
       if (formChannels.has(sheetName)) {
-        await interaction.reply(`Form "${sheetName}" is already being tracked.`);
-        return;
+        return interaction.reply(`⚠️ ${sheetName} is already being tracked`);
       }
 
+      // Initialize last row
+      const sheets = await authorize();
+      const responses = await fetchResponses(sheets, sheetName);
+      const initialRow = responses ? responses.length : 0;
+
       formChannels.set(sheetName, channelId);
-      await saveFormChannels(formChannels);
-      await interaction.reply(`Started tracking form "${sheetName}" in channel <#${channelId}>.`);
+      await formChannelsCollection.insertOne({ sheet_name: sheetName, channel_id: channelId });
+      await updateLastRow(sheetName, initialRow);
+
+      interaction.reply(`✅ Now tracking ${sheetName} in <#${channelId}>`);
     }
 
     if (commandName === 'removeform') {
       const sheetName = options.getString('sheetname');
-
+      
       if (!formChannels.has(sheetName)) {
-        await interaction.reply(`Form "${sheetName}" is not being tracked.`);
-        return;
+        return interaction.reply(`⚠️ ${sheetName} is not being tracked`);
       }
 
       formChannels.delete(sheetName);
-      await saveFormChannels(formChannels);
-      await interaction.reply(`Stopped tracking form "${sheetName}".`);
+      await formChannelsCollection.deleteOne({ sheet_name: sheetName });
+      await lastRowsCollection.deleteOne({ sheet_name: sheetName });
+
+      interaction.reply(`✅ Stopped tracking ${sheetName}`);
     }
 
     if (commandName === 'listforms') {
-      const formList = Array.from(formChannels.entries())
-        .map(([sheetName, channelId]) => `${sheetName} -> <#${channelId}>`)
-        .join('\n');
-
-      await interaction.reply(`**Tracked Forms:**\n${formList || 'No forms are being tracked.'}`);
-    }
-
-    if (commandName === 'ping') {
-      await interaction.reply('Pong! 🏓');
+      const list = Array.from(formChannels)
+        .map(([name, id]) => `• ${name} → <#${id}>`)
+        .join('\n') || 'No forms being tracked';
+      
+      interaction.reply(`📋 Tracked Forms:\n${list}`);
     }
   } catch (error) {
-    console.error('❌ Error handling command:', error);
-    await interaction.reply('❌ An error occurred while processing your command.');
-    await notifyError(`Error handling command ${commandName}: ${error.message}`);
+    console.error('❌ Command error:', error);
+    interaction.reply('⚠️ An error occurred');
   }
 });
 
 // Start the bot
 client.once('ready', async () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
-
-  try {
-    // Connect to MongoDB
-    await mongoClient.connect();
-    db = mongoClient.db('prs-helpter');
-    formChannelsCollection = db.collection('form_channels');
-    lastRowsCollection = db.collection('last_rows');
-
-    // Load form channels
-    formChannels = await loadFormChannels();
-
-    // Start polling Google Sheets
-    setInterval(pollSheets, 60000); // Poll every 60 seconds
-  } catch (error) {
-    console.error('❌ Error during bot startup:', error);
-    await notifyError(`Error during bot startup: ${error.message}`);
-  }
+  console.log(`✅ Bot logged in as ${client.user.tag}`);
+  await initializeDatabase();
+  setInterval(pollSheets, 60000); // Check every minute
 });
 
-// Flask-like web server to keep the bot alive
+// Web server for uptime monitoring
 const app = express();
-app.get('/', (req, res) => res.send('✅ Bot is running!'));
-app.listen(5000, () => console.log('Web server is running on port 5000.'));
+app.get('/', (req, res) => res.send('🤖 Bot is running'));
 
-// Login to Discord
-client.login(DISCORD_TOKEN);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🌐 Web server running on port ${PORT}`));
+
+// Start everything
+client.login(process.env.DISCORD_TOKEN);
