@@ -48,7 +48,7 @@ const client = new Client({
 });
 
 // Google Sheets setup
-const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
+const SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly'];
 const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
 
 // MongoDB setup
@@ -107,13 +107,16 @@ async function authorize() {
 }
 
 // Fetch all Google Sheets
-async function fetchAllSheets(sheets) {
+async function fetchAllSheets(drive) {
   try {
-    const response = await sheets.spreadsheets.list();
-    if (!response.data.spreadsheets) {
+    const response = await drive.files.list({
+      q: "mimeType='application/vnd.google-apps.spreadsheet'",
+      fields: 'files(id, name)',
+    });
+    if (!response.data.files) {
       throw new Error('No spreadsheets found.');
     }
-    return response.data.spreadsheets;
+    return response.data.files;
   } catch (error) {
     console.error('❌ Failed to fetch spreadsheets:', error.message);
     return [];
@@ -189,20 +192,30 @@ async function sendResponses(channelId, responses) {
 // Check for new responses every 60 seconds
 async function pollSheets() {
   try {
+    console.log("Polling Google Sheets...");
+
     const sheets = await authorize();
 
     for (const [sheetName, { channelId, spreadsheetId }] of formChannels) {
       try {
+        console.log(`Processing sheet: ${sheetName} in spreadsheet: ${spreadsheetId}`);
+
         const responses = await fetchResponses(sheets, spreadsheetId, sheetName);
-        if (!responses || responses.length < 1) continue;
+        if (!responses || responses.length < 1) {
+          console.log(`No responses found for sheet: ${sheetName}`);
+          continue;
+        }
 
         const lastRowDoc = await lastRowsCollection.findOne({ sheet_name: sheetName });
         const lastProcessedRow = lastRowDoc ? lastRowDoc.last_row : 0;
 
         if (responses.length > lastProcessedRow) {
           const newResponses = responses.slice(lastProcessedRow);
+          console.log(`Found ${newResponses.length} new responses for sheet: ${sheetName}`);
           await sendResponses(channelId, newResponses);
           await updateLastRow(sheetName, responses.length);
+        } else {
+          console.log(`No new responses for sheet: ${sheetName}`);
         }
       } catch (error) {
         console.error(`❌ Error processing ${sheetName}:`, error);
@@ -234,53 +247,49 @@ client.on('interactionCreate', async interaction => {
   if (!interaction.isCommand() && !interaction.isMessageComponent()) return;
 
   try {
-    const { commandName, customId, options } = interaction;
+    const { commandName, options } = interaction;
 
     if (commandName === 'addform') {
-      const sheets = await authorize();
-      const allSheets = await fetchAllSheets(sheets);
-      const sheetNames = allSheets.map(sheet => sheet.properties.title).join('\n');
+      const drive = google.drive({ version: 'v3', auth: await authorize() });
+      const allSheets = await fetchAllSheets(drive);
+      const sheetNames = allSheets.map(sheet => sheet.name).join('\n');
 
       await interaction.reply(`Here are the available Google Sheets:\n\n${sheetNames}\n\nPlease type the name of the sheet you want to track.`);
 
       // Store interaction state
-      interaction.state = { step: 'selectSheet', sheets: allSheets };
-    }
+      client.once('messageCreate', async message => {
+        if (message.author.id !== interaction.user.id) return;
 
-    if (interaction.state?.step === 'selectSheet' && interaction.isMessage()) {
-      const sheetName = interaction.content.trim();
-      const selectedSheet = interaction.state.sheets.find(sheet => sheet.properties.title === sheetName);
+        const sheetName = message.content.trim();
+        const selectedSheet = allSheets.find(sheet => sheet.name === sheetName);
 
-      if (!selectedSheet) {
-        return interaction.reply(`❌ Sheet "${sheetName}" does not exist. Please type a valid sheet name.`);
-      }
+        if (!selectedSheet) {
+          return interaction.followUp(`❌ Sheet "${sheetName}" does not exist. Please type a valid sheet name.`);
+        }
 
-      interaction.state.sheetName = sheetName;
-      interaction.state.spreadsheetId = selectedSheet.spreadsheetId;
+        client.once('messageCreate', async channelMessage => {
+          if (channelMessage.author.id !== interaction.user.id) return;
 
-      await interaction.reply('Great! Now mention the channel where responses should be sent.');
-      interaction.state.step = 'selectChannel';
-    }
+          const channelId = channelMessage.content.replace('<#', '').replace('>', '').trim();
+          const channel = client.channels.cache.get(channelId);
 
-    if (interaction.state?.step === 'selectChannel' && interaction.isMessage()) {
-      const channelId = interaction.content.replace('<#', '').replace('>', '').trim();
-      const channel = client.channels.cache.get(channelId);
+          if (!channel || !channel.isTextBased()) {
+            return interaction.followUp(`❌ Invalid channel ID: <#${channelId}>. Please provide a valid text channel ID.`);
+          }
 
-      if (!channel || !channel.isTextBased()) {
-        return interaction.reply(`❌ Invalid channel ID: <#${channelId}>. Please provide a valid text channel ID.`);
-      }
+          const sheets = await authorize();
+          const responses = await fetchResponses(sheets, selectedSheet.id, sheetName);
+          const initialRow = responses ? responses.length : 0;
 
-      const { sheetName, spreadsheetId } = interaction.state;
-      const sheets = await authorize();
-      const responses = await fetchResponses(sheets, spreadsheetId, sheetName);
-      const initialRow = responses ? responses.length : 0;
+          formChannels.set(sheetName, { channelId, spreadsheetId: selectedSheet.id });
+          await formChannelsCollection.insertOne({ sheet_name: sheetName, channel_id: channelId, spreadsheet_id: selectedSheet.id });
+          await updateLastRow(sheetName, initialRow);
 
-      formChannels.set(sheetName, { channelId, spreadsheetId });
-      await formChannelsCollection.insertOne({ sheet_name: sheetName, channel_id: channelId, spreadsheet_id: spreadsheetId });
-      await updateLastRow(sheetName, initialRow);
+          interaction.followUp(`✅ Now tracking ${sheetName} in <#${channelId}>`);
+        });
 
-      interaction.reply(`✅ Now tracking ${sheetName} in <#${channelId}>`);
-      delete interaction.state;
+        message.channel.send('Great! Now mention the channel where responses should be sent.');
+      });
     }
 
     if (commandName === 'removeform') {
@@ -331,7 +340,11 @@ client.on('interactionCreate', async interaction => {
     }
   } catch (error) {
     console.error('❌ Command error:', error);
-    interaction.reply('⚠️ An error occurred');
+    if (interaction.replied || interaction.deferred) {
+      await interaction.followUp('⚠️ An error occurred');
+    } else {
+      await interaction.reply('⚠️ An error occurred');
+    }
   }
 });
 
@@ -340,6 +353,7 @@ client.once('ready', async () => {
   console.log(`✅ Bot logged in as ${client.user.tag}`);
   await initializeDatabase();
   await registerCommands();
+  console.log("Starting polling at 60-second intervals...");
   setInterval(pollSheets, 60000); // Check every minute
 });
 
