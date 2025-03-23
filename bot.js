@@ -60,6 +60,7 @@ const mongoClient = new MongoClient(process.env.MONGO_URI, {
 // Global variables
 let db, formChannelsCollection, lastRowsCollection;
 let formChannels = new Map();
+let interactionState = {};
 
 // Initialize MongoDB collections
 async function initializeDatabase() {
@@ -273,39 +274,43 @@ client.on('interactionCreate', async interaction => {
       await interaction.reply(`Here are the available Google Sheets:\n\n${sheetNames}\n\nPlease type the name of the sheet you want to track.`);
 
       // Store interaction state
-      client.once('messageCreate', async message => {
-        if (message.author.id !== interaction.user.id) return;
+      interactionState[interaction.user.id] = { step: 'selectSheet', allSheets };
+    }
 
-        const sheetName = message.content.trim();
-        const selectedSheet = allSheets.find(sheet => sheet.name === sheetName);
+    if (interactionState[interaction.user.id]?.step === 'selectSheet' && interaction.isMessage()) {
+      const sheetName = interaction.content.trim();
+      const selectedSheet = interactionState[interaction.user.id].allSheets.find(sheet => sheet.name === sheetName);
 
-        if (!selectedSheet) {
-          return interaction.followUp(`❌ Sheet "${sheetName}" does not exist. Please type a valid sheet name.`);
-        }
+      if (!selectedSheet) {
+        return interaction.reply(`❌ Sheet "${sheetName}" does not exist. Please type a valid sheet name.`);
+      }
 
-        client.once('messageCreate', async channelMessage => {
-          if (channelMessage.author.id !== interaction.user.id) return;
+      interactionState[interaction.user.id].sheetName = sheetName;
+      interactionState[interaction.user.id].spreadsheetId = selectedSheet.id;
+      interactionState[interaction.user.id].step = 'selectChannel';
 
-          const channelId = channelMessage.content.replace('<#', '').replace('>', '').trim();
-          const channel = client.channels.cache.get(channelId);
+      await interaction.reply('Great! Now mention the channel where responses should be sent.');
+    }
 
-          if (!channel || !channel.isTextBased()) {
-            return interaction.followUp(`❌ Invalid channel ID: <#${channelId}>. Please provide a valid text channel ID.`);
-          }
+    if (interactionState[interaction.user.id]?.step === 'selectChannel' && interaction.isMessage()) {
+      const channelId = interaction.content.replace('<#', '').replace('>', '').trim();
+      const channel = client.channels.cache.get(channelId);
 
-          const sheets = await authorize();
-          const responses = await fetchResponses(sheets, selectedSheet.id, sheetName);
-          const initialRow = responses ? responses.length : 0;
+      if (!channel || !channel.isTextBased()) {
+        return interaction.reply(`❌ Invalid channel ID: <#${channelId}>. Please provide a valid text channel ID.`);
+      }
 
-          formChannels.set(sheetName, { channelId, spreadsheetId: selectedSheet.id });
-          await formChannelsCollection.insertOne({ sheet_name: sheetName, channel_id: channelId, spreadsheet_id: selectedSheet.id });
-          await updateLastRow(sheetName, initialRow);
+      const { sheetName, spreadsheetId } = interactionState[interaction.user.id];
+      const sheets = await authorize();
+      const responses = await fetchResponses(sheets, spreadsheetId, sheetName);
+      const initialRow = responses ? responses.length : 0;
 
-          interaction.followUp(`✅ Now tracking ${sheetName} in <#${channelId}>`);
-        });
+      formChannels.set(sheetName, { channelId, spreadsheetId });
+      await formChannelsCollection.insertOne({ sheet_name: sheetName, channel_id: channelId, spreadsheet_id: spreadsheetId });
+      await updateLastRow(sheetName, initialRow);
 
-        message.channel.send('Great! Now mention the channel where responses should be sent.');
-      });
+      await interaction.reply(`✅ Now tracking ${sheetName} in <#${channelId}>`);
+      delete interactionState[interaction.user.id];
     }
 
     if (commandName === 'removeform') {
