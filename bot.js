@@ -151,7 +151,7 @@ async function fetchResponses(sheets, spreadsheetId, sheetName) {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!A:Z`,
+      range: `'${sheetName}'!A:Z`, // Ensure sheet name is wrapped in single quotes
     });
 
     if (!response.data.values) {
