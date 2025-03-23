@@ -134,12 +134,17 @@ async function fetchResponses(sheets, spreadsheetId, sheetName) {
     }
 
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId, // Use the provided spreadsheetId
-      range: `${sheetName}!A:Z`
+      spreadsheetId,
+      range: `${sheetName}!A:Z`,
     });
-    return response.data.values || [];
+
+    if (!response.data.values) {
+      throw new Error(`Sheet "${sheetName}" has no data or does not exist.`);
+    }
+
+    return response.data.values;
   } catch (error) {
-    console.error(`❌ Failed to fetch ${sheetName}:`, error);
+    console.error(`❌ Failed to fetch ${sheetName}:`, error.message);
     return null;
   }
 }
