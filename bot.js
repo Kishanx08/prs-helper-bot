@@ -1,10 +1,8 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes } = require('discord.js');
 const { google } = require('googleapis');
 const { MongoClient } = require('mongodb');
 const express = require('express');
-const path = require('path');
-const { REST, Routes } = require('discord.js');
 
 // Define your slash commands
 const commands = [
@@ -21,6 +19,12 @@ const commands = [
       {
         name: 'channelid',
         description: 'Channel to send responses',
+        type: 3, // STRING
+        required: true,
+      },
+      {
+        name: 'spreadsheetid',
+        description: 'ID of the Google Spreadsheet',
         type: 3, // STRING
         required: true,
       },
@@ -93,7 +97,7 @@ async function initializeDatabase() {
     
     // Load existing mappings
     const docs = await formChannelsCollection.find().toArray();
-    formChannels = new Map(docs.map(doc => [doc.sheet_name, doc.channel_id]));
+    formChannels = new Map(docs.map(doc => [doc.sheet_name, { channelId: doc.channel_id, spreadsheetId: doc.spreadsheet_id }]));
     
     console.log('✅ MongoDB initialized successfully');
   } catch (error) {
@@ -119,10 +123,10 @@ async function authorize() {
 }
 
 // Fetch responses from Google Sheets
-async function fetchResponses(sheets, sheetName) {
+async function fetchResponses(sheets, spreadsheetId, sheetName) {
   try {
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: serviceAccount.spreadsheet_id,
+      spreadsheetId, // Use the provided spreadsheetId
       range: `${sheetName}!A:Z`
     });
     return response.data.values || [];
@@ -176,9 +180,9 @@ async function pollSheets() {
   try {
     const sheets = await authorize();
     
-    for (const [sheetName, channelId] of formChannels) {
+    for (const [sheetName, { channelId, spreadsheetId }] of formChannels) {
       try {
-        const responses = await fetchResponses(sheets, sheetName);
+        const responses = await fetchResponses(sheets, spreadsheetId, sheetName);
         if (!responses || responses.length < 1) continue;
 
         const lastRowDoc = await lastRowsCollection.findOne({ sheet_name: sheetName });
@@ -224,6 +228,7 @@ client.on('interactionCreate', async interaction => {
     if (commandName === 'addform') {
       const sheetName = options.getString('sheetname');
       const channelId = options.getString('channelid');
+      const spreadsheetId = options.getString('spreadsheetid'); // Get spreadsheetId from command
 
       if (formChannels.has(sheetName)) {
         return interaction.reply(`⚠️ ${sheetName} is already being tracked`);
@@ -231,11 +236,11 @@ client.on('interactionCreate', async interaction => {
 
       // Initialize last row
       const sheets = await authorize();
-      const responses = await fetchResponses(sheets, sheetName);
+      const responses = await fetchResponses(sheets, spreadsheetId, sheetName);
       const initialRow = responses ? responses.length : 0;
 
-      formChannels.set(sheetName, channelId);
-      await formChannelsCollection.insertOne({ sheet_name: sheetName, channel_id: channelId });
+      formChannels.set(sheetName, { channelId, spreadsheetId });
+      await formChannelsCollection.insertOne({ sheet_name: sheetName, channel_id: channelId, spreadsheet_id: spreadsheetId });
       await updateLastRow(sheetName, initialRow);
 
       interaction.reply(`✅ Now tracking ${sheetName} in <#${channelId}>`);
@@ -257,7 +262,7 @@ client.on('interactionCreate', async interaction => {
 
     if (commandName === 'listforms') {
       const list = Array.from(formChannels)
-        .map(([name, id]) => `• ${name} → <#${id}>`)
+        .map(([name, { channelId }]) => `• ${name} → <#${channelId}>`)
         .join('\n') || 'No forms being tracked';
       
       interaction.reply(`📋 Tracked Forms:\n${list}`);
@@ -272,7 +277,7 @@ client.on('interactionCreate', async interaction => {
 client.once('ready', async () => {
   console.log(`✅ Bot logged in as ${client.user.tag}`);
   await initializeDatabase();
-  await registerCommands(); // <-- Add this line
+  await registerCommands();
   setInterval(pollSheets, 60000); // Check every minute
 });
 
