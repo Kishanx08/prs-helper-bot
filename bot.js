@@ -252,24 +252,19 @@ client.on('interactionCreate', async interaction => {
   // Validate spreadsheet ID
   const sheets = await authorize();
   try {
-    await sheets.spreadsheets.get({
+    const spreadsheet = await sheets.spreadsheets.get({
       spreadsheetId,
     });
-  } catch (error) {
-    return interaction.reply(`❌ Invalid spreadsheet ID: ${spreadsheetId}. Please check the ID and ensure the sheet is shared with the service account.`);
-  }
 
-  // Validate sheet name
-  try {
-    const response = await sheets.spreadsheets.get({
-      spreadsheetId,
-    });
-    const sheetExists = response.data.sheets.some(sheet => sheet.properties.title === sheetName);
+    // Validate sheet name
+    const sheetExists = spreadsheet.data.sheets.some(sheet => sheet.properties.title === sheetName);
     if (!sheetExists) {
-      return interaction.reply(`❌ Sheet "${sheetName}" does not exist in the provided spreadsheet.`);
+      // Log available sheet names for debugging
+      const availableSheets = spreadsheet.data.sheets.map(sheet => sheet.properties.title).join(', ');
+      return interaction.reply(`❌ Sheet "${sheetName}" does not exist in the provided spreadsheet. Available sheets: ${availableSheets}`);
     }
   } catch (error) {
-    return interaction.reply(`❌ Failed to validate sheet: ${error.message}`);
+    return interaction.reply(`❌ Invalid spreadsheet ID or access denied: ${error.message}`);
   }
 
   // Check if sheet is already being tracked
