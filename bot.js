@@ -283,20 +283,6 @@ client.on('interactionCreate', async interaction => {
   interaction.reply(`✅ Now tracking ${sheetName} in <#${channelId}>`);
 }
 
-    if (commandName === 'removeform') {
-  const sheetName = options.getString('sheetname');
-
-  if (!formChannels.has(sheetName)) {
-    return interaction.reply(`⚠️ ${sheetName} is not being tracked`);
-  }
-
-  formChannels.delete(sheetName);
-  await formChannelsCollection.deleteOne({ sheet_name: sheetName });
-  await lastRowsCollection.deleteOne({ sheet_name: sheetName });
-
-  interaction.reply(`✅ Stopped tracking ${sheetName}`);
-}
-
     if (commandName === 'listforms') {
   const list = Array.from(formChannels)
     .map(([name, { channelId }]) => `• ${name} → <#${channelId}>`)
