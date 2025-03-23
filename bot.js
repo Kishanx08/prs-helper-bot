@@ -48,7 +48,7 @@ const client = new Client({
 });
 
 // Google Sheets setup
-const SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly'];
+const SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/drive.readonly'];
 const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
 
 // MongoDB setup
@@ -90,7 +90,7 @@ async function initializeDatabase() {
   }
 }
 
-// Google Sheets authentication
+// Google Sheets and Drive authentication
 async function authorize() {
   try {
     const auth = new google.auth.JWT({
@@ -102,6 +102,22 @@ async function authorize() {
     return google.sheets({ version: 'v4', auth });
   } catch (error) {
     console.error('❌ Google Sheets auth failed:', error);
+    throw error;
+  }
+}
+
+// Google Drive authentication
+async function authorizeDrive() {
+  try {
+    const auth = new google.auth.JWT({
+      email: serviceAccount.client_email,
+      key: serviceAccount.private_key,
+      scopes: SCOPES
+    });
+    await auth.authorize();
+    return google.drive({ version: 'v3', auth });
+  } catch (error) {
+    console.error('❌ Google Drive auth failed:', error);
     throw error;
   }
 }
@@ -250,7 +266,7 @@ client.on('interactionCreate', async interaction => {
     const { commandName, options } = interaction;
 
     if (commandName === 'addform') {
-      const drive = google.drive({ version: 'v3', auth: await authorize() });
+      const drive = await authorizeDrive();
       const allSheets = await fetchAllSheets(drive);
       const sheetNames = allSheets.map(sheet => sheet.name).join('\n');
 
