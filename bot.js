@@ -127,19 +127,19 @@ function checkRateLimit() {
 }
 
 // Sheet data fetching
-async function fetchResponses(spreadsheetId, sheetName) {
+async function fetchResponses(spreadsheetId) {
   try {
     if (!checkRateLimit()) {
       console.warn('⚠️ API call limit reached. Skipping this poll.');
       return null;
     }
 
-    console.log(`Fetching data from sheet: ${sheetName} in spreadsheet: ${spreadsheetId}`);
+    console.log(`Fetching data from spreadsheet: ${spreadsheetId}`);
 
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // List sheets to verify the existence of the sheet
+    // List sheets to get their names
     const sheetMetadata = await sheets.spreadsheets.get({
       spreadsheetId,
     });
@@ -147,18 +147,16 @@ async function fetchResponses(spreadsheetId, sheetName) {
     const sheetNames = sheetMetadata.data.sheets.map(sheet => sheet.properties.title);
     console.log(`Available sheets: ${sheetNames.join(', ')}`);
 
-    if (!sheetNames.includes(sheetName)) {
-      throw new Error(`Sheet "${sheetName}" does not exist in spreadsheet: ${spreadsheetId}`);
-    }
-
-    const response = await sheets.spreadsheets.values.get({
+    // Fetch data from all sheets
+    const ranges = sheetNames.map(name => `'${name}'!A:Z`);
+    const response = await sheets.spreadsheets.values.batchGet({
       spreadsheetId,
-      range: `'${sheetName}'!A:Z`, // Ensure sheet name is wrapped in single quotes
+      ranges,
     });
 
-    return response.data.values || [];
+    return response.data.valueRanges || [];
   } catch (error) {
-    console.error(`❌ Failed to fetch ${sheetName}:`, error.message);
+    console.error(`❌ Failed to fetch data from spreadsheet: ${spreadsheetId}`, error.message);
     if (error.response?.data?.error) {
       console.error('Google API Error:', error.response.data.error);
     }
@@ -167,26 +165,32 @@ async function fetchResponses(spreadsheetId, sheetName) {
 }
 
 // Response processing
-async function processSheet(sheetName, { channelId, spreadsheetId }) {
+async function processSpreadsheet(spreadsheetId, channelId) {
   try {
-    const responses = await fetchResponses(spreadsheetId, sheetName);
-    if (!responses) return;
+    const valueRanges = await fetchResponses(spreadsheetId);
+    if (!valueRanges) return;
 
-    const lastRowDoc = await lastRowsCollection.findOne({ sheet_name: sheetName });
-    const lastProcessedRow = lastRowDoc?.last_row || 0;
+    for (const valueRange of valueRanges) {
+      const responses = valueRange.values;
+      const sheetName = valueRange.range.split('!')[0].replace(/'/g, '');
+      console.log(`Processing sheet: ${sheetName}`);
 
-    if (responses.length > lastProcessedRow) {
-      const newResponses = responses.slice(lastProcessedRow);
-      await sendResponses(channelId, newResponses);
-      await lastRowsCollection.updateOne(
-        { sheet_name: sheetName },
-        { $set: { last_row: responses.length } },
-        { upsert: true }
-      );
-      console.log(`✅ Processed ${newResponses.length} new responses for ${sheetName}`);
+      const lastRowDoc = await lastRowsCollection.findOne({ sheet_name: sheetName });
+      const lastProcessedRow = lastRowDoc?.last_row || 0;
+
+      if (responses.length > lastProcessedRow) {
+        const newResponses = responses.slice(lastProcessedRow);
+        await sendResponses(channelId, newResponses);
+        await lastRowsCollection.updateOne(
+          { sheet_name: sheetName },
+          { $set: { last_row: responses.length } },
+          { upsert: true }
+        );
+        console.log(`✅ Processed ${newResponses.length} new responses for ${sheetName}`);
+      }
     }
   } catch (error) {
-    console.error(`❌ Error processing ${sheetName}:`, error);
+    console.error(`❌ Error processing spreadsheet: ${spreadsheetId}`, error);
   }
 }
 
@@ -221,7 +225,7 @@ async function handleAddForm(interaction) {
     });
 
     interactionState[interaction.user.id] = {
-      step: 'selectSheet',
+      step: 'selectSpreadsheet',
       spreadsheets: data.files
     };
 
@@ -238,8 +242,8 @@ async function handleAddForm(interaction) {
 // Polling mechanism
 async function pollSheets() {
   console.log('🔍 Polling sheets...');
-  for (const [sheetName, config] of formChannels) {
-    await processSheet(sheetName, config);
+  for (const [spreadsheetId, config] of formChannels) {
+    await processSpreadsheet(spreadsheetId, config.channelId);
   }
 }
 
@@ -277,7 +281,7 @@ client.on('interactionCreate', async interaction => {
 
       case 'listforms':
         const list = Array.from(formChannels)
-          .map(([name, { channelId }]) => `- ${name} → <#${channelId}>`)
+          .map(([spreadsheetId, { channelId }]) => `- ${spreadsheetId} → <#${channelId}>`)
           .join('\n') || 'No tracked forms';
         await interaction.reply(`📋 Tracked Forms:\n${list}`);
         break;
@@ -301,11 +305,11 @@ client.on('messageCreate', async message => {
   if (!state) return;
 
   try {
-    if (state.step === 'selectSheet') {
-      const sheet = state.spreadsheets.find(f => f.name === message.content.trim());
-      if (!sheet) return message.reply('❌ Invalid sheet name');
+    if (state.step === 'selectSpreadsheet') {
+      const spreadsheet = state.spreadsheets.find(f => f.name === message.content.trim());
+      if (!spreadsheet) return message.reply('❌ Invalid sheet name');
 
-      state.sheet = sheet;
+      state.spreadsheet = spreadsheet;
       state.step = 'selectChannel';
       await message.reply('Mention the channel to receive responses:');
     }
@@ -317,18 +321,17 @@ client.on('messageCreate', async message => {
         return message.reply('❌ Invalid channel mention');
       }
 
-      formChannels.set(state.sheet.name, {
+      formChannels.set(state.spreadsheet.id, {
         channelId,
-        spreadsheetId: state.sheet.id
       });
 
       await formChannelsCollection.insertOne({
-        sheet_name: state.sheet.name,
+        sheet_name: state.spreadsheet.name,
         channel_id: channelId,
-        spreadsheet_id: state.sheet.id
+        spreadsheet_id: state.spreadsheet.id
       });
 
-      await message.reply(`✅ Now tracking ${state.sheet.name} in ${channel.toString()}`);
+      await message.reply(`✅ Now tracking ${state.spreadsheet.name} in ${channel.toString()}`);
       delete interactionState[message.author.id];
     }
   } catch (error) {
