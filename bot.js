@@ -61,12 +61,6 @@ let db, formChannelsCollection, lastRowsCollection;
 let formChannels = new Map();
 let interactionState = {};
 
-// Polling limits configuration
-const POLLING_INTERVAL = parseInt(process.env.POLLING_INTERVAL || '60000', 10); // Default to 60 seconds
-const MAX_API_CALLS_PER_MINUTE = 60; // Adjust based on Google's rate limits
-let apiCallCount = 0;
-const apiCallTimestamps = [];
-
 // Database initialization
 async function initializeDatabase() {
   try {
@@ -85,7 +79,7 @@ async function initializeDatabase() {
     lastRowsCollection = db.collection('last_rows');
     
     const docs = await formChannelsCollection.find().toArray();
-    formChannels = new Map(docs.map(doc => [doc.sheet_name, doc]));
+    formChannels = new Map(docs.map(doc => [doc.spreadsheet_id, doc]));
     console.log('✅ MongoDB initialized');
   } catch (error) {
     console.error('❌ Database initialization failed:', error);
@@ -116,23 +110,6 @@ async function getAuthClient() {
   }
 }
 
-// Rate limiting
-function checkRateLimit() {
-  const now = Date.now();
-  apiCallTimestamps.push(now);
-
-  // Remove timestamps older than 1 minute
-  while (apiCallTimestamps.length && apiCallTimestamps[0] <= now - 60000) {
-    apiCallTimestamps.shift();
-  }
-
-  if (apiCallTimestamps.length >= MAX_API_CALLS_PER_MINUTE) {
-    return false;
-  }
-
-  return true;
-}
-
 // Sheet data fetching
 async function fetchResponses(spreadsheetId) {
   try {
@@ -148,39 +125,11 @@ async function fetchResponses(spreadsheetId) {
     });
 
     console.log(`✅ Access confirmed to: ${metadata.data.properties.title}`);
-    console.log(`📊 Sheets found: ${metadata.data.sheets.map(s => s.properties.title).join(', ')}`);
+    const sheetNames = metadata.data.sheets.map(s => s.properties.title);
+    console.log(`📊 Sheets found: ${sheetNames.join(', ')}`);
 
     // 2. Fetch data from all sheets
-    const ranges = metadata.data.sheets.map(
-      sheet => `'${sheet.properties.title}'!A:Z`
-    );
-
-    const response = await sheets.spreadsheets.values.batchGet({
-      spreadsheetId,
-      ranges,
-    });
-
-    return response.data.valueRanges;
-  } catch (error) {
-    console.error('❌ Critical fetch error:', {
-      spreadsheetId,
-      error: error.message,
-      response: error.response?.data
-    });
-    return null;
-  }
-}
-
-    // List sheets to get their names
-    const sheetMetadata = await sheets.spreadsheets.get({
-      spreadsheetId,
-    });
-
-    const sheetNames = sheetMetadata.data.sheets.map(sheet => sheet.properties.title);
-    console.log(`Available sheets: ${sheetNames.join(', ')}`);
-
-    // Fetch data from all sheets
-    const ranges = sheetNames.map(name => `'${name}'!A:Z`);
+    const ranges = sheetNames.map(name => `'${name.replace(/'/g, "''")}'!A:Z`);
     const response = await sheets.spreadsheets.values.batchGet({
       spreadsheetId,
       ranges,
@@ -188,10 +137,11 @@ async function fetchResponses(spreadsheetId) {
 
     return response.data.valueRanges || [];
   } catch (error) {
-    console.error(`❌ Failed to fetch data from spreadsheet: ${spreadsheetId}`, error.message);
-    if (error.response?.data?.error) {
-      console.error('Google API Error:', error.response.data.error);
-    }
+    console.error('❌ Critical fetch error:', {
+      spreadsheetId,
+      error: error.message,
+      response: error.response?.data
+    });
     return null;
   }
 }
@@ -204,17 +154,25 @@ async function processSpreadsheet(spreadsheetId, channelId) {
 
     for (const valueRange of valueRanges) {
       const responses = valueRange.values;
+      if (!responses || responses.length === 0) continue;
+
       const sheetName = valueRange.range.split('!')[0].replace(/'/g, '');
       console.log(`Processing sheet: ${sheetName}`);
 
-      const lastRowDoc = await lastRowsCollection.findOne({ sheet_name: sheetName });
+      const lastRowDoc = await lastRowsCollection.findOne({ 
+        spreadsheet_id: spreadsheetId,
+        sheet_name: sheetName 
+      });
       const lastProcessedRow = lastRowDoc?.last_row || 0;
 
       if (responses.length > lastProcessedRow) {
         const newResponses = responses.slice(lastProcessedRow);
         await sendResponses(channelId, newResponses);
         await lastRowsCollection.updateOne(
-          { sheet_name: sheetName },
+          { 
+            spreadsheet_id: spreadsheetId,
+            sheet_name: sheetName 
+          },
           { $set: { last_row: responses.length } },
           { upsert: true }
         );
@@ -229,19 +187,26 @@ async function processSpreadsheet(spreadsheetId, channelId) {
 // Discord message sending
 async function sendResponses(channelId, responses) {
   const channel = client.channels.cache.get(channelId);
-  if (!channel) return;
+  if (!channel) {
+    console.error(`Channel ${channelId} not found`);
+    return;
+  }
 
   for (const response of responses) {
-    const embed = new EmbedBuilder()
-      .setTitle('📝 New Form Response')
-      .setColor(0x00FF00)
-      .addFields(response.map((value, index) => ({
-        name: `Field ${index + 1}`,
-        value: value.substring(0, 1000) || 'N/A',
-        inline: false
-      })));
+    try {
+      const embed = new EmbedBuilder()
+        .setTitle('📝 New Form Response')
+        .setColor(0x00FF00)
+        .addFields(response.map((value, index) => ({
+          name: `Field ${index + 1}`,
+          value: value?.toString().substring(0, 1000) || 'N/A',
+          inline: false
+        })));
 
-    await channel.send({ embeds: [embed] });
+      await channel.send({ embeds: [embed] });
+    } catch (error) {
+      console.error('Failed to send response:', error);
+    }
   }
 }
 
@@ -261,22 +226,28 @@ async function handleAddForm(interaction) {
       spreadsheets: data.files
     };
 
-    await interaction.reply(
-      `Available Sheets:\n${data.files.map(f => `- ${f.name}`).join('\n')}\n` +
-      'Type the exact sheet name to track:'
-    );
+    await interaction.reply({
+      content: `📂 Available Spreadsheets:\n${data.files.map(f => `- ${f.name}`).join('\n')}\n\nType the exact name of the spreadsheet to track:`,
+      ephemeral: true
+    });
   } catch (error) {
     console.error('❌ Addform error:', error);
-    await interaction.reply('⚠️ Failed to fetch sheets');
+    await interaction.reply('⚠️ Failed to fetch spreadsheets');
   }
 }
 
 // Polling mechanism
 async function pollSheets() {
+  console.log('🔍 Polling sheets...');
   console.log('📋 Currently tracked spreadsheets:', Array.from(formChannels.keys()));
-if (formChannels.size === 0) {
-  console.log('ℹ️ No spreadsheets being tracked');
-  return;
+  if (formChannels.size === 0) {
+    console.log('ℹ️ No spreadsheets being tracked');
+    return;
+  }
+
+  for (const [spreadsheetId, { channelId }] of formChannels) {
+    await processSpreadsheet(spreadsheetId, channelId);
+  }
 }
 
 // Bot setup
@@ -285,9 +256,14 @@ client.once('ready', async () => {
   await initializeDatabase();
   
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-  await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+  try {
+    await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+    console.log('✅ Slash commands registered');
+  } catch (error) {
+    console.error('❌ Failed to register commands:', error);
+  }
   
-  setInterval(pollSheets, POLLING_INTERVAL);
+  setInterval(pollSheets, 60000);
   console.log('✅ Bot operational');
 });
 
@@ -301,19 +277,25 @@ client.on('interactionCreate', async interaction => {
         return await handleAddForm(interaction);
       
       case 'removeform':
-        const sheetName = interaction.options.getString('sheetname');
-        if (formChannels.has(sheetName)) {
-          formChannels.delete(sheetName);
-          await formChannelsCollection.deleteOne({ sheet_name: sheetName });
-          await interaction.reply(`✅ Stopped tracking ${sheetName}`);
+        const spreadsheetName = interaction.options.getString('sheetname');
+        const entry = [...formChannels.entries()].find(
+          ([_, config]) => config.sheet_name === spreadsheetName
+        );
+        
+        if (entry) {
+          formChannels.delete(entry[0]);
+          await formChannelsCollection.deleteOne({ spreadsheet_id: entry[0] });
+          await interaction.reply(`✅ Stopped tracking ${spreadsheetName}`);
         } else {
-          await interaction.reply('❌ Sheet not being tracked');
+          await interaction.reply('❌ Spreadsheet not being tracked');
         }
         break;
 
       case 'listforms':
         const list = Array.from(formChannels)
-          .map(([spreadsheetId, { channelId }]) => `- ${spreadsheetId} → <#${channelId}>`)
+          .map(([id, { channelId, sheet_name }]) => 
+            `- ${sheet_name} (${id}) → <#${channelId}>`
+          )
           .join('\n') || 'No tracked forms';
         await interaction.reply(`📋 Tracked Forms:\n${list}`);
         break;
@@ -339,22 +321,21 @@ client.on('messageCreate', async message => {
   try {
     if (state.step === 'selectSpreadsheet') {
       const spreadsheet = state.spreadsheets.find(f => f.name === message.content.trim());
-      if (!spreadsheet) return message.reply('❌ Invalid sheet name');
+      if (!spreadsheet) return message.reply('❌ Invalid spreadsheet name');
 
       state.spreadsheet = spreadsheet;
       state.step = 'selectChannel';
       await message.reply('Mention the channel to receive responses:');
     }
     else if (state.step === 'selectChannel') {
-      const channelId = message.content.match(/\d+/)[0];
-      const channel = client.channels.cache.get(channelId);
-      
-      if (!channel?.isTextBased()) {
-        return message.reply('❌ Invalid channel mention');
+      const channelId = message.mentions.channels.first()?.id;
+      if (!channelId) {
+        return message.reply('❌ Please mention a valid text channel');
       }
 
       formChannels.set(state.spreadsheet.id, {
         channelId,
+        sheet_name: state.spreadsheet.name
       });
 
       await formChannelsCollection.insertOne({
@@ -363,7 +344,7 @@ client.on('messageCreate', async message => {
         spreadsheet_id: state.spreadsheet.id
       });
 
-      await message.reply(`✅ Now tracking ${state.spreadsheet.name} in ${channel.toString()}`);
+      await message.reply(`✅ Now tracking ${state.spreadsheet.name} in <#${channelId}>`);
       delete interactionState[message.author.id];
     }
   } catch (error) {
@@ -375,8 +356,7 @@ client.on('messageCreate', async message => {
 // Web server
 const app = express();
 app.get('/', (req, res) => res.send('🟢 Bot Online'));
-app.listen(process.env.PORT || 3000, () => 
-  console.log(`🌐 Web server listening on port ${process.env.PORT || 3000}`)
-);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🌐 Web server listening on port ${PORT}`));
 
 client.login(process.env.DISCORD_TOKEN);
