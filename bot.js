@@ -111,46 +111,32 @@ async function getAuthClient() {
 }
 
 // Sheet data fetching
-async function fetchResponses(spreadsheetId) {
+async function fetchResponses(spreadsheetId, sheetName) {
   try {
+    console.log(`🔍 Fetching data from ${sheetName} in ${spreadsheetId}`);
+    
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // Get all sheets in the spreadsheet
-    const metadata = await sheets.spreadsheets.get({
+    // Get headers (first row)
+    const headerResponse = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      fields: 'sheets.properties.title'
+      range: `'${sheetName}'!1:1`,
+    });
+    const headers = headerResponse.data.values?.[0] || [];
+
+    // Get response data (skip header row)
+    const dataResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${sheetName}'!A2:Z`,
     });
 
-    const sheetsData = [];
-    
-    for (const sheet of metadata.data.sheets) {
-      const sheetName = sheet.properties.title;
-      
-      // Get headers (first row)
-      const headerResponse = await sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: `'${sheetName}'!1:1`,
-      });
-
-      const headers = headerResponse.data.values?.[0] || [];
-      
-      // Get response data (skip header row)
-      const dataResponse = await sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: `'${sheetName}'!A2:Z`, // Start from row 2
-      });
-
-      sheetsData.push({
-        sheetName,
-        headers,
-        values: dataResponse.data.values || []
-      });
-    }
-
-    return sheetsData;
+    return {
+      headers,
+      values: dataResponse.data.values || []
+    };
   } catch (error) {
-    console.error('❌ Fetch error:', error.message);
+    console.error(`❌ Failed to fetch ${sheetName}:`, error.message);
     return null;
   }
 }
@@ -158,33 +144,47 @@ async function fetchResponses(spreadsheetId) {
 // Response processing
 async function processSpreadsheet(spreadsheetId, channelId) {
   try {
-    const sheetsData = await fetchResponses(spreadsheetId);
-    if (!sheetsData) return;
+    const auth = await getAuthClient();
+    const sheets = google.sheets({ version: 'v4', auth });
 
-    for (const {sheetName, headers, values} of sheetsData) {
-      const lastRowDoc = await lastRowsCollection.findOne({ 
-        spreadsheet_id: spreadsheetId,
-        sheet_name: sheetName 
-      });
-      const lastProcessedRow = lastRowDoc?.last_row || 0;
+    // Get all sheet names in the spreadsheet
+    const metadata = await sheets.spreadsheets.get({
+      spreadsheetId,
+    });
+    const sheetNames = metadata.data.sheets.map(sheet => sheet.properties.title);
 
-      if (values.length > lastProcessedRow) {
-        const newResponses = values.slice(lastProcessedRow);
-        await sendResponses(channelId, headers, newResponses, sheetName);
-        
-        await lastRowsCollection.updateOne(
-          { 
-            spreadsheet_id: spreadsheetId,
-            sheet_name: sheetName 
-          },
-          { $set: { last_row: values.length + 1 } }, // +1 to account for header row
-          { upsert: true }
-        );
-        console.log(`✅ Processed ${newResponses.length} new responses from ${sheetName}`);
+    for (const sheetName of sheetNames) {
+      try {
+        const response = await fetchResponses(spreadsheetId, sheetName);
+        if (!response || !response.values) continue;
+
+        const { headers, values } = response;
+        const lastRowDoc = await lastRowsCollection.findOne({ 
+          spreadsheet_id: spreadsheetId,
+          sheet_name: sheetName 
+        });
+        const lastProcessedRow = lastRowDoc?.last_row || 0;
+
+        if (values.length > lastProcessedRow) {
+          const newResponses = values.slice(lastProcessedRow);
+          await sendResponses(channelId, headers, newResponses, sheetName);
+          
+          await lastRowsCollection.updateOne(
+            { 
+              spreadsheet_id: spreadsheetId,
+              sheet_name: sheetName 
+            },
+            { $set: { last_row: values.length } },
+            { upsert: true }
+          );
+          console.log(`✅ Processed ${newResponses.length} new responses from ${sheetName}`);
+        }
+      } catch (error) {
+        console.error(`❌ Error processing ${sheetName}:`, error);
       }
     }
   } catch (error) {
-    console.error(`❌ Error processing spreadsheet: ${spreadsheetId}`, error);
+    console.error(`❌ Error processing spreadsheet ${spreadsheetId}:`, error);
   }
 }
 
@@ -192,7 +192,7 @@ async function processSpreadsheet(spreadsheetId, channelId) {
 async function sendResponses(channelId, headers, responses, sheetName) {
   const channel = client.channels.cache.get(channelId);
   if (!channel) {
-    console.error(`Channel ${channelId} not found`);
+    console.error(`❌ Channel ${channelId} not found`);
     return;
   }
 
@@ -202,7 +202,6 @@ async function sendResponses(channelId, headers, responses, sheetName) {
         .setTitle(`📝 New Response (${sheetName})`)
         .setColor(0x00FF00);
 
-      // Map each value to its corresponding question
       response.forEach((value, index) => {
         const question = headers[index] || `Question ${index + 1}`;
         embed.addFields({
@@ -214,7 +213,7 @@ async function sendResponses(channelId, headers, responses, sheetName) {
 
       await channel.send({ embeds: [embed] });
     } catch (error) {
-      console.error('Failed to send response:', error);
+      console.error('❌ Failed to send response:', error);
     }
   }
 }
@@ -249,6 +248,7 @@ async function handleAddForm(interaction) {
 async function pollSheets() {
   console.log('🔍 Polling sheets...');
   console.log('📋 Currently tracked spreadsheets:', Array.from(formChannels.keys()));
+  
   if (formChannels.size === 0) {
     console.log('ℹ️ No spreadsheets being tracked');
     return;
