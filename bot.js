@@ -96,15 +96,22 @@ async function initializeDatabase() {
 // Google authentication
 async function getAuthClient() {
   try {
+    console.log('🔑 Authenticating with service account:', serviceAccount.client_email);
+    
     const auth = new google.auth.JWT({
       email: serviceAccount.client_email,
       key: serviceAccount.private_key.replace(/\\n/g, '\n'),
       scopes: SCOPES
     });
+    
     await auth.authorize();
+    console.log('✅ Google auth successful');
     return auth;
   } catch (error) {
-    console.error('❌ Google auth failed:', error);
+    console.error('❌ Auth failed - Check your service account JSON:', {
+      client_email: serviceAccount?.client_email,
+      error: error.message
+    });
     throw error;
   }
 }
@@ -129,15 +136,40 @@ function checkRateLimit() {
 // Sheet data fetching
 async function fetchResponses(spreadsheetId) {
   try {
-    if (!checkRateLimit()) {
-      console.warn('⚠️ API call limit reached. Skipping this poll.');
-      return null;
-    }
-
-    console.log(`Fetching data from spreadsheet: ${spreadsheetId}`);
-
+    console.log(`🔍 Attempting to fetch spreadsheet: ${spreadsheetId}`);
+    
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
+
+    // 1. First verify spreadsheet exists
+    const metadata = await sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'spreadsheetId,properties.title,sheets.properties.title'
+    });
+
+    console.log(`✅ Access confirmed to: ${metadata.data.properties.title}`);
+    console.log(`📊 Sheets found: ${metadata.data.sheets.map(s => s.properties.title).join(', ')}`);
+
+    // 2. Fetch data from all sheets
+    const ranges = metadata.data.sheets.map(
+      sheet => `'${sheet.properties.title}'!A:Z`
+    );
+
+    const response = await sheets.spreadsheets.values.batchGet({
+      spreadsheetId,
+      ranges,
+    });
+
+    return response.data.valueRanges;
+  } catch (error) {
+    console.error('❌ Critical fetch error:', {
+      spreadsheetId,
+      error: error.message,
+      response: error.response?.data
+    });
+    return null;
+  }
+}
 
     // List sheets to get their names
     const sheetMetadata = await sheets.spreadsheets.get({
@@ -241,10 +273,10 @@ async function handleAddForm(interaction) {
 
 // Polling mechanism
 async function pollSheets() {
-  console.log('🔍 Polling sheets...');
-  for (const [spreadsheetId, config] of formChannels) {
-    await processSpreadsheet(spreadsheetId, config.channelId);
-  }
+  console.log('📋 Currently tracked spreadsheets:', Array.from(formChannels.keys()));
+if (formChannels.size === 0) {
+  console.log('ℹ️ No spreadsheets being tracked');
+  return;
 }
 
 // Bot setup
