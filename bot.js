@@ -113,35 +113,44 @@ async function getAuthClient() {
 // Sheet data fetching
 async function fetchResponses(spreadsheetId) {
   try {
-    console.log(`🔍 Attempting to fetch spreadsheet: ${spreadsheetId}`);
-    
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // 1. First verify spreadsheet exists
+    // Get all sheets in the spreadsheet
     const metadata = await sheets.spreadsheets.get({
       spreadsheetId,
-      fields: 'spreadsheetId,properties.title,sheets.properties.title'
+      fields: 'sheets.properties.title'
     });
 
-    console.log(`✅ Access confirmed to: ${metadata.data.properties.title}`);
-    const sheetNames = metadata.data.sheets.map(s => s.properties.title);
-    console.log(`📊 Sheets found: ${sheetNames.join(', ')}`);
+    const sheetsData = [];
+    
+    for (const sheet of metadata.data.sheets) {
+      const sheetName = sheet.properties.title;
+      
+      // Get headers (first row)
+      const headerResponse = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${sheetName}'!1:1`,
+      });
 
-    // 2. Fetch data from all sheets
-    const ranges = sheetNames.map(name => `'${name.replace(/'/g, "''")}'!A:Z`);
-    const response = await sheets.spreadsheets.values.batchGet({
-      spreadsheetId,
-      ranges,
-    });
+      const headers = headerResponse.data.values?.[0] || [];
+      
+      // Get response data (skip header row)
+      const dataResponse = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${sheetName}'!A2:Z`, // Start from row 2
+      });
 
-    return response.data.valueRanges || [];
+      sheetsData.push({
+        sheetName,
+        headers,
+        values: dataResponse.data.values || []
+      });
+    }
+
+    return sheetsData;
   } catch (error) {
-    console.error('❌ Critical fetch error:', {
-      spreadsheetId,
-      error: error.message,
-      response: error.response?.data
-    });
+    console.error('❌ Fetch error:', error.message);
     return null;
   }
 }
@@ -149,34 +158,29 @@ async function fetchResponses(spreadsheetId) {
 // Response processing
 async function processSpreadsheet(spreadsheetId, channelId) {
   try {
-    const valueRanges = await fetchResponses(spreadsheetId);
-    if (!valueRanges) return;
+    const sheetsData = await fetchResponses(spreadsheetId);
+    if (!sheetsData) return;
 
-    for (const valueRange of valueRanges) {
-      const responses = valueRange.values;
-      if (!responses || responses.length === 0) continue;
-
-      const sheetName = valueRange.range.split('!')[0].replace(/'/g, '');
-      console.log(`Processing sheet: ${sheetName}`);
-
+    for (const {sheetName, headers, values} of sheetsData) {
       const lastRowDoc = await lastRowsCollection.findOne({ 
         spreadsheet_id: spreadsheetId,
         sheet_name: sheetName 
       });
       const lastProcessedRow = lastRowDoc?.last_row || 0;
 
-      if (responses.length > lastProcessedRow) {
-        const newResponses = responses.slice(lastProcessedRow);
-        await sendResponses(channelId, newResponses);
+      if (values.length > lastProcessedRow) {
+        const newResponses = values.slice(lastProcessedRow);
+        await sendResponses(channelId, headers, newResponses, sheetName);
+        
         await lastRowsCollection.updateOne(
           { 
             spreadsheet_id: spreadsheetId,
             sheet_name: sheetName 
           },
-          { $set: { last_row: responses.length } },
+          { $set: { last_row: values.length + 1 } }, // +1 to account for header row
           { upsert: true }
         );
-        console.log(`✅ Processed ${newResponses.length} new responses for ${sheetName}`);
+        console.log(`✅ Processed ${newResponses.length} new responses from ${sheetName}`);
       }
     }
   } catch (error) {
@@ -185,7 +189,7 @@ async function processSpreadsheet(spreadsheetId, channelId) {
 }
 
 // Discord message sending
-async function sendResponses(channelId, responses) {
+async function sendResponses(channelId, headers, responses, sheetName) {
   const channel = client.channels.cache.get(channelId);
   if (!channel) {
     console.error(`Channel ${channelId} not found`);
@@ -195,13 +199,18 @@ async function sendResponses(channelId, responses) {
   for (const response of responses) {
     try {
       const embed = new EmbedBuilder()
-        .setTitle('📝 New Form Response')
-        .setColor(0x00FF00)
-        .addFields(response.map((value, index) => ({
-          name: `Field ${index + 1}`,
-          value: value?.toString().substring(0, 1000) || 'N/A',
+        .setTitle(`📝 New Response (${sheetName})`)
+        .setColor(0x00FF00);
+
+      // Map each value to its corresponding question
+      response.forEach((value, index) => {
+        const question = headers[index] || `Question ${index + 1}`;
+        embed.addFields({
+          name: question,
+          value: value?.toString().substring(0, 1000) || 'No response',
           inline: false
-        })));
+        });
+      });
 
       await channel.send({ embeds: [embed] });
     } catch (error) {
