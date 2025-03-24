@@ -106,12 +106,17 @@ async function getAuthClient() {
 // Sheet data fetching
 async function fetchResponses(spreadsheetId, sheetName) {
   try {
+    if (!spreadsheetId) {
+      throw new Error('Spreadsheet ID is missing');
+    }
+    console.log(`Fetching data from sheet: ${sheetName} in spreadsheet: ${spreadsheetId}`);
+
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!A:Z`,
+      range: `'${sheetName}'!A:Z`, // Ensure sheet name is wrapped in single quotes
     });
 
     return response.data.values || [];
