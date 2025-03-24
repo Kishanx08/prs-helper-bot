@@ -61,6 +61,12 @@ let db, formChannelsCollection, lastRowsCollection;
 let formChannels = new Map();
 let interactionState = {};
 
+// Polling limits configuration
+const POLLING_INTERVAL = parseInt(process.env.POLLING_INTERVAL || '60000', 10); // Default to 60 seconds
+const MAX_API_CALLS_PER_MINUTE = 60; // Adjust based on Google's rate limits
+let apiCallCount = 0;
+const apiCallTimestamps = [];
+
 // Database initialization
 async function initializeDatabase() {
   try {
@@ -103,16 +109,47 @@ async function getAuthClient() {
   }
 }
 
+// Rate limiting
+function checkRateLimit() {
+  const now = Date.now();
+  apiCallTimestamps.push(now);
+
+  // Remove timestamps older than 1 minute
+  while (apiCallTimestamps.length && apiCallTimestamps[0] <= now - 60000) {
+    apiCallTimestamps.shift();
+  }
+
+  if (apiCallTimestamps.length >= MAX_API_CALLS_PER_MINUTE) {
+    return false;
+  }
+
+  return true;
+}
+
 // Sheet data fetching
 async function fetchResponses(spreadsheetId, sheetName) {
   try {
-    if (!spreadsheetId) {
-      throw new Error('Spreadsheet ID is missing');
+    if (!checkRateLimit()) {
+      console.warn('⚠️ API call limit reached. Skipping this poll.');
+      return null;
     }
+
     console.log(`Fetching data from sheet: ${sheetName} in spreadsheet: ${spreadsheetId}`);
 
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
+
+    // List sheets to verify the existence of the sheet
+    const sheetMetadata = await sheets.spreadsheets.get({
+      spreadsheetId,
+    });
+
+    const sheetNames = sheetMetadata.data.sheets.map(sheet => sheet.properties.title);
+    console.log(`Available sheets: ${sheetNames.join(', ')}`);
+
+    if (!sheetNames.includes(sheetName)) {
+      throw new Error(`Sheet "${sheetName}" does not exist in spreadsheet: ${spreadsheetId}`);
+    }
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -214,7 +251,7 @@ client.once('ready', async () => {
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
   
-  setInterval(pollSheets, 60000);
+  setInterval(pollSheets, POLLING_INTERVAL);
   console.log('✅ Bot operational');
 });
 
