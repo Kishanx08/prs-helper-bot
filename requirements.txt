@@ -1,9 +1,0 @@
-discord.py
-flask
-python-dotenv
-gspread
-oauth2client
-pymongo
-requests           # For making HTTP requests (e.g., error notifications)
-schedule           # For scheduling tasks (e.g., polling Google Sheets)
-python-dateutil    # For handling date and time operations
