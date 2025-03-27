@@ -224,30 +224,32 @@ async function pollSheets() {
   }
 
   console.log('🔍 Polling sheets...');
+  console.log('Debug - formChannels entries:', Array.from(formChannels.entries()));
+
   if (formChannels.size === 0) {
     console.log('ℹ️ No spreadsheets being tracked');
     return;
   }
 
   await Promise.allSettled(
-    Array.from(formChannels.entries()).map(
-      async ([key, { channelId, guild_id, spreadsheet_id }]) => {
+    async ([key, config]) => {
         try {
-          if (!spreadsheet_id) {
-            throw new Error(`Missing spreadsheet_id for key ${key}`);
+          if (!config.spreadsheet_id) {
+            console.error('Invalid config for key', key, 'Full config:', config);
+            throw new Error(`Missing spreadsheet_id in config`);
           }
-          await processSpreadsheet(spreadsheet_id, channelId, guild_id);
+          await processSpreadsheet(config.spreadsheet_id, config.channelId, config.guild_id);
         } catch (error) {
-          console.error(`❌ Failed polling in guild ${guild_id}:`, error.message);
+          console.error(`❌ Failed polling in guild ${config.guild_id}:`, error.message);
+          // Auto-clean invalid entries
           formChannels.delete(key);
           await formChannelsCollection.deleteOne({
-            guild_id,
-            spreadsheet_id
+            guild_id: config.guild_id,
+            spreadsheet_id: config.spreadsheet_id
           });
         }
       }
     )
-  );
   console.log('✅ Polling cycle completed');
 }
 
