@@ -3,11 +3,20 @@ const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes } = require('disco
 const { google } = require('googleapis');
 const { MongoClient } = require('mongodb');
 const express = require('express');
+const { RateLimiter } = require('limiter');
+
+// Error handling
 process.on('unhandledRejection', (error) => {
   console.error('Unhandled Promise Rejection:', error);
 });
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+});
 
-// Slash commands configuration
+// Rate limiter (50 requests/minute for Google Sheets API)
+const limiter = new RateLimiter({ tokensPerInterval: 50, interval: 'minute' });
+
+// Slash commands
 const commands = [
   {
     name: 'addform',
@@ -35,13 +44,13 @@ const commands = [
   },
 ];
 
-// Environment validation
+// Validate environment
 const REQUIRED_ENV = ['DISCORD_TOKEN', 'GOOGLE_SERVICE_ACCOUNT_JSON', 'MONGO_URI'];
 REQUIRED_ENV.forEach(variable => {
   if (!process.env[variable]) throw new Error(`Missing ${variable} in .env`);
 });
 
-// Client initialization
+// Initialize Discord client
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -50,33 +59,31 @@ const client = new Client({
   ]
 });
 
-// Google API configuration
+// Google Sheets setup
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/drive.readonly'];
 const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
 
-// Database setup
+// MongoDB setup
 const mongoClient = new MongoClient(process.env.MONGO_URI, {
   useNewUrlParser: true,
-  useUnifiedTopology: true
+  useUnifiedTopology: true,
+  retryWrites: true,
+  retryReads: true
+});
+
+mongoClient.on('error', (err) => {
+  console.error('MongoDB Error:', err);
 });
 
 let db, formChannelsCollection, lastRowsCollection;
 let formChannels = new Map();
 let interactionState = {};
 
-// Database initialization
+// Initialize database
 async function initializeDatabase() {
   try {
     await mongoClient.connect();
     db = mongoClient.db('prs-helper');
-    
-    const collections = await db.listCollections().toArray();
-    if (!collections.some(c => c.name === 'form_channels')) {
-      await db.createCollection('form_channels');
-    }
-    if (!collections.some(c => c.name === 'last_rows')) {
-      await db.createCollection('last_rows');
-    }
     
     formChannelsCollection = db.collection('form_channels');
     lastRowsCollection = db.collection('last_rows');
@@ -96,52 +103,42 @@ async function initializeDatabase() {
   }
 }
 
-// Google authentication
+// Google auth
 async function getAuthClient() {
   try {
-    console.log('🔑 Authenticating with service account:', serviceAccount.client_email);
-    
     const auth = new google.auth.JWT({
       email: serviceAccount.client_email,
       key: serviceAccount.private_key.replace(/\\n/g, '\n'),
       scopes: SCOPES
     });
-    
     await auth.authorize();
-    console.log('✅ Google auth successful');
     return auth;
   } catch (error) {
-    console.error('❌ Auth failed - Check your service account JSON:', {
-      client_email: serviceAccount?.client_email,
-      error: error.message
-    });
+    console.error('❌ Google auth failed:', error);
     throw error;
   }
 }
 
-// Sheet data fetching
+// Fetch responses with rate limiting
 async function fetchResponses(spreadsheetId, sheetName) {
+  await limiter.removeTokens(1);
   try {
-    console.log(`🔍 Fetching data from ${sheetName} in ${spreadsheetId}`);
-    
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // Get headers (first row)
-    const headerResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `'${sheetName}'!1:1`,
-    });
-    const headers = headerResponse.data.values?.[0] || [];
-
-    // Get response data (skip header row)
-    const dataResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `'${sheetName}'!A2:Z`,
-    });
+    const [headerResponse, dataResponse] = await Promise.all([
+      sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${sheetName}'!1:1`,
+      }),
+      sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${sheetName}'!A2:Z`,
+      })
+    ]);
 
     return {
-      headers,
+      headers: headerResponse.data.values?.[0] || [],
       values: dataResponse.data.values || []
     };
   } catch (error) {
@@ -150,20 +147,16 @@ async function fetchResponses(spreadsheetId, sheetName) {
   }
 }
 
-// Response processing
-async function processSpreadsheet(spreadsheetId, channelId) {
-  try {
-    const auth = await getAuthClient();
-    const sheets = google.sheets({ version: 'v4', auth });
+// Process spreadsheet with retries
+async function processSpreadsheet(spreadsheetId, channelId, retries = 3) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const auth = await getAuthClient();
+      const sheets = google.sheets({ version: 'v4', auth });
+      const metadata = await sheets.spreadsheets.get({ spreadsheetId });
+      const sheetNames = metadata.data.sheets.map(sheet => sheet.properties.title);
 
-    // Get all sheet names in the spreadsheet
-    const metadata = await sheets.spreadsheets.get({
-      spreadsheetId,
-    });
-    const sheetNames = metadata.data.sheets.map(sheet => sheet.properties.title);
-
-    for (const sheetName of sheetNames) {
-      try {
+      for (const sheetName of sheetNames) {
         const response = await fetchResponses(spreadsheetId, sheetName);
         if (!response || !response.values) continue;
 
@@ -188,16 +181,17 @@ async function processSpreadsheet(spreadsheetId, channelId) {
           );
           console.log(`✅ Processed ${newResponses.length} new responses from ${sheetName}`);
         }
-      } catch (error) {
-        console.error(`❌ Error processing ${sheetName}:`, error);
       }
+      return; // Success
+    } catch (error) {
+      console.error(`Attempt ${attempt} failed for ${spreadsheetId}:`, error.message);
+      if (attempt === retries) throw error;
+      await new Promise(resolve => setTimeout(resolve, 5000)); // 5s backoff
     }
-  } catch (error) {
-    console.error(`❌ Error processing spreadsheet ${spreadsheetId}:`, error);
   }
 }
 
-// Discord message sending
+// Send responses to Discord
 async function sendResponses(channelId, headers, responses, sheetName) {
   const channel = client.channels.cache.get(channelId);
   if (!channel) {
@@ -227,48 +221,34 @@ async function sendResponses(channelId, headers, responses, sheetName) {
   }
 }
 
-// Command handlers
-async function handleAddForm(interaction) {
-  try {
-    const auth = await getAuthClient();
-    const drive = google.drive({ version: 'v3', auth });
-    
-    const { data } = await drive.files.list({
-      q: "mimeType='application/vnd.google-apps.spreadsheet'",
-      fields: 'files(id, name)',
-    });
-
-    interactionState[interaction.user.id] = {
-      step: 'selectSpreadsheet',
-      spreadsheets: data.files
-    };
-
-    await interaction.reply({
-      content: `📂 Available Spreadsheets:\n${data.files.map(f => `- ${f.name}`).join('\n')}\n\nType the exact name of the spreadsheet to track:`,
-      ephemeral: true
-    });
-  } catch (error) {
-    console.error('❌ Addform error:', error);
-    await interaction.reply('⚠️ Failed to fetch spreadsheets');
-  }
-}
-
-// Polling mechanism
+// Poll all sheets in parallel
 async function pollSheets() {
+  if (!mongoClient.isConnected()) {
+    console.log('⚠️ MongoDB disconnected, reconnecting...');
+    await initializeDatabase();
+  }
+
   console.log('🔍 Polling sheets...');
-  console.log('📋 Currently tracked spreadsheets:', Array.from(formChannels.keys()));
-  
   if (formChannels.size === 0) {
     console.log('ℹ️ No spreadsheets being tracked');
     return;
   }
 
-  for (const [spreadsheetId, { channelId }] of formChannels) {
-    await processSpreadsheet(spreadsheetId, channelId);
-  }
+  await Promise.allSettled(
+    Array.from(formChannels.entries()).map(
+      async ([spreadsheetId, { channelId }]) => {
+        try {
+          await processSpreadsheet(spreadsheetId, channelId);
+        } catch (error) {
+          console.error(`❌ Failed polling ${spreadsheetId}:`, error.message);
+        }
+      }
+    )
+  );
+  console.log('✅ Polling cycle completed');
 }
 
-// Bot setup
+// Discord bot setup
 client.once('ready', async () => {
   console.log(`🤖 Logged in as ${client.user.tag}`);
   await initializeDatabase();
@@ -281,18 +261,20 @@ client.once('ready', async () => {
     console.error('❌ Failed to register commands:', error);
   }
   
+  // Start polling (60 seconds interval)
   setInterval(pollSheets, 60000);
   console.log('✅ Bot operational');
 });
 
-// Interaction handling
+// Slash command handlers
 client.on('interactionCreate', async interaction => {
   if (!interaction.isCommand()) return;
 
   try {
     switch (interaction.commandName) {
       case 'addform':
-        return await handleAddForm(interaction);
+        await handleAddForm(interaction);
+        break;
       
       case 'removeform':
         const spreadsheetName = interaction.options.getString('sheetname');
@@ -329,7 +311,33 @@ client.on('interactionCreate', async interaction => {
   }
 });
 
-// Message handling for setup flow
+// Form setup flow
+async function handleAddForm(interaction) {
+  try {
+    const auth = await getAuthClient();
+    const drive = google.drive({ version: 'v3', auth });
+    
+    const { data } = await drive.files.list({
+      q: "mimeType='application/vnd.google-apps.spreadsheet'",
+      fields: 'files(id, name)',
+    });
+
+    interactionState[interaction.user.id] = {
+      step: 'selectSpreadsheet',
+      spreadsheets: data.files
+    };
+
+    await interaction.reply({
+      content: `📂 Available Spreadsheets:\n${data.files.map(f => `- ${f.name}`).join('\n')}\n\nType the exact name of the spreadsheet to track:`,
+      ephemeral: true
+    });
+  } catch (error) {
+    console.error('❌ Addform error:', error);
+    await interaction.reply('⚠️ Failed to fetch spreadsheets');
+  }
+}
+
+// Message handling for form setup
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
 
@@ -371,10 +379,18 @@ client.on('messageCreate', async message => {
   }
 });
 
-// Web server
+// Web server (for health checks)
 const app = express();
 app.get('/', (req, res) => res.send('🟢 Bot Online'));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🌐 Web server listening on port ${PORT}`));
 
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  await mongoClient.close();
+  client.destroy();
+  process.exit(0);
+});
+
+// Start bot
 client.login(process.env.DISCORD_TOKEN);
