@@ -142,7 +142,7 @@ async function processSpreadsheet(spreadsheetId, channelId, retries = 3) {
         const { headers, values } = response;
         const lastRowDoc = await lastRowsCollection.findOne({ 
           spreadsheet_id: spreadsheetId,
-          sheet_name: sheetName
+          sheet_name: sheetName,
           guild_id: guildId // Add Guild ID filter 
         });
         const lastProcessedRow = lastRowDoc?.last_row || 0;
@@ -223,9 +223,9 @@ async function pollSheets() {
 
   await Promise.allSettled(
     Array.from(formChannels.entries()).map(
-      async ([key, { channelId, guildId, spreadsheet_id }  ]) => {
+      async ([_, { channelId, guild_id, spreadsheet_id }]) => {
         try {
-          await processSpreadsheet(spreadsheetId, channelId, guild_id);
+          await processSpreadsheet(spreadsheet_id, channelId, guild_id);
         } catch (error) {
           console.error(`❌ Failed polling ${spreadsheet_id} in guild ${guild_id}:`, error.message);
         }
@@ -496,7 +496,7 @@ client.on('messageCreate', async message => {
     spreadsheet_id: state.spreadsheet.id,
     guild_id: message.guild.id // Add guild ID
   });
-  
+
       await message.reply({
         embeds: [
           new EmbedBuilder()
