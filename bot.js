@@ -332,7 +332,7 @@ client.on('interactionCreate', async interaction => {
   if (!interaction || !interaction.guild?.id) {
     console.error('Invalid interaction received');
     return;
-
+  }
   try {
     switch (interaction.commandName) {
       case 'addform':
