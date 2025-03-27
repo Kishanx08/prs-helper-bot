@@ -433,13 +433,14 @@ async function handleAddForm(interaction) {
 
     interactionState[interaction.user.id] = {
       step: 'selectSpreadsheet',
-      spreadsheets: data.files
+      spreadsheets: data.files,
       timeout: setTimeout(() => {
         clearUserState(interaction.user.id);
         interaction.followUp({
-          embeds: [new EmbedBuilder()
-            .setDescription('⌛ Timed out! Use `/addform` again to restart')
-            .setColor(0xFFA500)
+          embeds: [
+            new EmbedBuilder()
+              .setDescription('⌛ Timed out! Use `/addform` again to restart')
+              .setColor(0xFFA500)
           ],
           ephemeral: true
         });
