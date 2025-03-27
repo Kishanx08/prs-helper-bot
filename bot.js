@@ -13,7 +13,7 @@ process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
 });
 
-// Rate limiter (50 requests/minute for Google Sheets API)
+// Rate limiter
 const limiter = new RateLimiter({ tokensPerInterval: 50, interval: 'minute' });
 
 // Slash commands
@@ -63,101 +63,34 @@ function clearUserState(userId) {
   delete interactionState[userId];
 }
 
-// Initialize database
+// Initialize database - UPDATED
 async function initializeDatabase() {
   try {
-    // Connect with timeout and retry logic
     await mongoClient.connect();
     db = mongoClient.db('prs-helper');
     
-    // Verify collections exist or create them
     formChannelsCollection = db.collection('form_channels');
     lastRowsCollection = db.collection('last_rows');
     
-    // Add schema validation
-    await Promise.all([
-      db.command({
-        collMod: 'form_channels',
-        validator: {
-          $jsonSchema: {
-            bsonType: "object",
-            required: ["spreadsheet_id", "channel_id", "guild_id"],
-            properties: {
-              spreadsheet_id: { bsonType: "string" },
-              channel_id: { bsonType: "string" },
-              guild_id: { bsonType: "string" }
-            }
-          }
-        }
-      }),
-      db.command({
-        collMod: 'last_rows',
-        validator: {
-          $jsonSchema: {
-            bsonType: "object",
-            required: ["spreadsheet_id", "sheet_name", "guild_id"],
-            properties: {
-              spreadsheet_id: { bsonType: "string" },
-              sheet_name: { bsonType: "string" },
-              guild_id: { bsonType: "string" }
-            }
-          }
-        }
-      })
-    ]);
-
-    // Load data with corruption detection
     const docs = await formChannelsCollection.find().toArray();
-    const validDocs = docs.filter(doc => 
-      doc.spreadsheet_id && doc.channel_id && doc.guild_id
-    );
-
-    // Log and clean corrupt entries
-    if (docs.length !== validDocs.length) {
-      const corruptCount = docs.length - validDocs.length;
-      console.warn(`⚠️ Found ${corruptCount} corrupt documents, cleaning...`);
-      await formChannelsCollection.deleteMany({
-        $or: [
-          { spreadsheet_id: { $exists: false } },
-          { channel_id: { $exists: false } },
-          { guild_id: { $exists: false } }
-        ]
-      });
-    }
-
-    // Initialize formChannels Map
-    formChannels = new Map(validDocs.map(doc => [
-      `${doc.guild_id}:${doc.spreadsheet_id}`,
-      { 
-        channelId: doc.channel_id, 
-        sheet_name: doc.sheet_name || 'Sheet1', // Default fallback
-        guild_id: doc.guild_id 
-      }
-    ]));
-
-    console.log(`✅ MongoDB initialized with ${formChannels.size} valid form mappings`);
+    formChannels = new Map();
     
-    // Set up periodic health checks
-    setInterval(async () => {
-      try {
-        await db.command({ ping: 1 });
-        const count = await formChannelsCollection.countDocuments();
-        console.log(`♻️ Database health check OK (${count} forms tracked)`);
-      } catch (err) {
-        console.error('⚠️ Database health check failed:', err);
+    docs.forEach(doc => {
+      if (!doc.spreadsheet_id || !doc.guild_id) {
+        console.warn('Skipping invalid entry:', doc);
+        return;
       }
-    }, 3600000); // Every hour
-
+      formChannels.set(`${doc.guild_id}:${doc.spreadsheet_id}`, {
+        channelId: doc.channel_id,
+        sheet_name: doc.sheet_name,
+        guild_id: doc.guild_id,
+        spreadsheet_id: doc.spreadsheet_id
+      });
+    });
+    
+    console.log(`✅ Initialized ${formChannels.size} valid form mappings`);
   } catch (error) {
     console.error('❌ Database initialization failed:', error);
-    
-    // Attempt graceful recovery
-    try {
-      await mongoClient.close();
-    } catch (e) {
-      console.error('Failed to close connection:', e);
-    }
-    
     process.exit(1);
   }
 }
@@ -200,8 +133,11 @@ async function fetchResponses(spreadsheetId, sheetName) {
   }
 }
 
-// Process spreadsheet with retries
+// Process spreadsheet with retries - UPDATED
 async function processSpreadsheet(spreadsheetId, channelId, guildId, retries = 3) {
+  if (!spreadsheetId) throw new Error('Missing spreadsheetId');
+  if (!guildId) throw new Error('Missing guildId');
+
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const auth = await getAuthClient();
@@ -211,37 +147,36 @@ async function processSpreadsheet(spreadsheetId, channelId, guildId, retries = 3
 
       for (const sheetName of sheetNames) {
         const response = await fetchResponses(spreadsheetId, sheetName);
-        if (!response || !response.values) continue;
+        if (!response?.values) continue;
 
-        const { headers, values } = response;
         const lastRowDoc = await lastRowsCollection.findOne({ 
           spreadsheet_id: spreadsheetId,
           sheet_name: sheetName,
-          guild_id: guildId // Now properly passed from pollSheets
+          guild_id: guildId
         });
         const lastProcessedRow = lastRowDoc?.last_row || 0;
 
-        if (values.length > lastProcessedRow) {
-          const newResponses = values.slice(lastProcessedRow);
-          await sendResponses(channelId, headers, newResponses, sheetName);
+        if (response.values.length > lastProcessedRow) {
+          const newResponses = response.values.slice(lastProcessedRow);
+          await sendResponses(channelId, response.headers, newResponses, sheetName);
           
           await lastRowsCollection.updateOne(
             { 
               spreadsheet_id: spreadsheetId,
               sheet_name: sheetName,
-              guild_id: guildId // Add guild id
+              guild_id: guildId
             },
-            { $set: { last_row: values.length } },
+            { $set: { last_row: response.values.length } },
             { upsert: true }
           );
           console.log(`✅ Processed ${newResponses.length} new responses from ${sheetName}`);
         }
       }
-      return; // Success
+      return;
     } catch (error) {
       console.error(`Attempt ${attempt} failed for ${spreadsheetId}:`, error.message);
       if (attempt === retries) throw error;
-      await new Promise(resolve => setTimeout(resolve, 5000)); // 5s backoff
+      await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }
 }
@@ -276,10 +211,9 @@ async function sendResponses(channelId, headers, responses, sheetName) {
   }
 }
 
-// Poll all sheets in parallel
+// Poll all sheets in parallel - UPDATED
 async function pollSheets() {
-  // Correct MongoDB connection check
-  if (!mongoClient.topology || !mongoClient.topology.isConnected()) {
+  if (!mongoClient.topology?.isConnected()) {
     console.log('⚠️ MongoDB disconnected, reconnecting...');
     try {
       await initializeDatabase();
@@ -297,11 +231,19 @@ async function pollSheets() {
 
   await Promise.allSettled(
     Array.from(formChannels.entries()).map(
-      async ([_, { channelId, guild_id: guildId, spreadsheet_id }]) => {
+      async ([key, { channelId, guild_id, spreadsheet_id }]) => {
         try {
-          await processSpreadsheet(spreadsheet_id, channelId, guildId);
+          if (!spreadsheet_id) {
+            throw new Error(`Missing spreadsheet_id for key ${key}`);
+          }
+          await processSpreadsheet(spreadsheet_id, channelId, guild_id);
         } catch (error) {
-          console.error(`❌ Failed polling ${spreadsheet_id} in guild ${guildId}:`, error.message);
+          console.error(`❌ Failed polling in guild ${guild_id}:`, error.message);
+          formChannels.delete(key);
+          await formChannelsCollection.deleteOne({
+            guild_id,
+            spreadsheet_id
+          });
         }
       }
     )
@@ -322,7 +264,6 @@ client.once('ready', async () => {
     console.error('❌ Failed to register commands:', error);
   }
   
-  // Start polling (60 seconds interval)
   setInterval(pollSheets, 60000);
   console.log('✅ Bot operational');
 });
@@ -594,7 +535,7 @@ client.on('messageCreate', async message => {
   }
 });
 
-// Web server (for health checks)
+// Web server
 const app = express();
 app.get('/', (req, res) => res.send('🟢 Bot Online'));
 const PORT = process.env.PORT || 3000;
