@@ -74,10 +74,11 @@ async function initializeDatabase() {
     
     const docs = await formChannelsCollection.find().toArray();
     formChannels = new Map(docs.map(doc => [
-      doc.spreadsheet_id, 
+      `${doc.guild_id}:${doc.spreadsheet_id}`, // Combine guild ID + spreadsheet ID as key
       { 
         channelId: doc.channel_id, 
-        sheet_name: doc.sheet_name 
+        sheet_name: doc.sheet_name,
+        guild_id: doc.guild_id // Add guild_id to stored data
       }
     ]));
     console.log('✅ MongoDB initialized');
@@ -141,7 +142,8 @@ async function processSpreadsheet(spreadsheetId, channelId, retries = 3) {
         const { headers, values } = response;
         const lastRowDoc = await lastRowsCollection.findOne({ 
           spreadsheet_id: spreadsheetId,
-          sheet_name: sheetName 
+          sheet_name: sheetName
+          guild_id: guildId // Add Guild ID filter 
         });
         const lastProcessedRow = lastRowDoc?.last_row || 0;
 
@@ -152,7 +154,8 @@ async function processSpreadsheet(spreadsheetId, channelId, retries = 3) {
           await lastRowsCollection.updateOne(
             { 
               spreadsheet_id: spreadsheetId,
-              sheet_name: sheetName 
+              sheet_name: sheetName,
+              guild_id: guildId // Add guild id
             },
             { $set: { last_row: values.length } },
             { upsert: true }
@@ -220,11 +223,11 @@ async function pollSheets() {
 
   await Promise.allSettled(
     Array.from(formChannels.entries()).map(
-      async ([spreadsheetId, { channelId }]) => {
+      async ([key, { channelId, guildId, spreadsheet_id }  ]) => {
         try {
-          await processSpreadsheet(spreadsheetId, channelId);
+          await processSpreadsheet(spreadsheetId, channelId, guild_id);
         } catch (error) {
-          console.error(`❌ Failed polling ${spreadsheetId}:`, error.message);
+          console.error(`❌ Failed polling ${spreadsheet_id} in guild ${guild_id}:`, error.message);
         }
       }
     )
@@ -261,47 +264,56 @@ client.on('interactionCreate', async interaction => {
         break;
       
       case 'removeform':
-        const spreadsheetName = interaction.options.getString('sheetname');
-        const entry = [...formChannels.entries()].find(
-          ([_, config]) => config.sheet_name === spreadsheetName
-        );
-        
-        if (entry) {
-          formChannels.delete(entry[0]);
-          await formChannelsCollection.deleteOne({ spreadsheet_id: entry[0] });
-          await interaction.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setDescription(`✅ Stopped tracking ${spreadsheetName}`)
-                .setColor(0x00FF00)
-            ]
-          });
-        } else {
-          await interaction.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setDescription('❌ Spreadsheet not being tracked')
-                .setColor(0xFF0000)
-            ]
-          });
-        }
-        break;
+          const spreadsheetName = interaction.options.getString('sheetname');
+          
+          // Only look for forms in current server
+          const entry = [...formChannels.entries()].find(
+            ([_, config]) => config.sheet_name === spreadsheetName && 
+            config.guild_id === interaction.guild.id
+          );
+          
+          if (entry) {
+            formChannels.delete(entry[0]);
+            await formChannelsCollection.deleteOne({ 
+              spreadsheet_id: entry[1].spreadsheet_id,
+              guild_id: interaction.guild.id // Only delete from current server
+            });
+            await interaction.reply({
+              embeds: [
+                new EmbedBuilder()
+                  .setDescription(`✅ Stopped tracking ${spreadsheetName}`)
+                  .setColor(0x00FF00)
+              ]
+            });
+          } else {
+            await interaction.reply({
+              embeds: [
+                new EmbedBuilder()
+                  .setDescription('❌ Spreadsheet not being tracked in this server')
+                  .setColor(0xFF0000)
+              ]
+            });
+          }
+          break;
 
       case 'listforms':
-        const list = Array.from(formChannels)
-          .map(([id, { channelId, sheet_name }]) => 
-            `- ${sheet_name} (${id}) → <#${channelId}>`
-          )
-          .join('\n') || 'No tracked forms';
-        await interaction.reply({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle('📋 Tracked Forms')
-              .setDescription(list)
-              .setColor(0x00FF00)
-          ]
-        });
-        break;
+            // Only show forms from current server
+            const list = Array.from(formChannels)
+              .filter(([_, config]) => config.guild_id === interaction.guild.id)
+              .map(([_, { channelId, sheet_name }]) => 
+                `- ${sheet_name} → <#${channelId}>`
+              )
+              .join('\n') || 'No tracked forms in this server';
+            
+            await interaction.reply({
+              embeds: [
+                new EmbedBuilder()
+                  .setTitle('📋 Tracked Forms')
+                  .setDescription(list)
+                  .setColor(0x00FF00)
+              ]
+            });
+            break;
 
       case 'ping':
         const latency = Date.now() - interaction.createdTimestamp;
@@ -470,17 +482,21 @@ client.on('messageCreate', async message => {
         throw new Error('No channel mentioned');
       }
 
-      formChannels.set(state.spreadsheet.id, {
-        channelId,
-        sheet_name: state.spreadsheet.name
-      });
+      // Store with guild ID
+  formChannels.set(`${message.guild.id}:${state.spreadsheet.id}`, {
+    channelId,
+    sheet_name: state.spreadsheet.name,
+    guild_id: message.guild.id // Add guild ID
+  });
 
-      await formChannelsCollection.insertOne({
-        sheet_name: state.spreadsheet.name,
-        channel_id: channelId,
-        spreadsheet_id: state.spreadsheet.id
-      });
-
+      // Save to database with guild ID
+  await formChannelsCollection.insertOne({
+    sheet_name: state.spreadsheet.name,
+    channel_id: channelId,
+    spreadsheet_id: state.spreadsheet.id,
+    guild_id: message.guild.id // Add guild ID
+  });
+  
       await message.reply({
         embeds: [
           new EmbedBuilder()
