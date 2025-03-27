@@ -18,48 +18,11 @@ const limiter = new RateLimiter({ tokensPerInterval: 50, interval: 'minute' });
 
 // Slash commands
 const commands = [
-  {
-    name: 'addform',
-    description: 'Start tracking a Google Form',
-  },
-  {
-    name: 'removeform',
-    description: 'Stop tracking a Google Form',
-    options: [
-      {
-        name: 'sheetname',
-        description: 'Name of the Google Sheet',
-        type: 3,
-        required: true,
-      },
-    ],
-  },
-  {
-    name: 'listforms',
-    description: 'List all tracked forms',
-  },
-  {
-    name: 'ping',
-    description: 'Check bot latency and API status',
-  },
-  {
-    name: 'dm',
-    description: 'Send a DM through the bot',
-    options: [
-      {
-        name: 'user',
-        description: 'User to DM',
-        type: 6, // USER type
-        required: true
-      },
-      {
-        name: 'text',
-        description: 'Message content',
-        type: 3, // STRING type
-        required: true
-      }
-    ]
-  }
+  { name: 'addform', description: 'Start tracking a Google Form' },
+  { name: 'removeform', description: 'Stop tracking a Google Form', options: [{ name: 'sheetname', description: 'Name of the Google Sheet', type: 3, required: true }] },
+  { name: 'listforms', description: 'List all tracked forms' },
+  { name: 'ping', description: 'Check bot latency and API status' },
+  { name: 'dm', description: 'Send a DM through the bot', options: [{ name: 'user', description: 'User to DM', type: 6, required: true }, { name: 'text', description: 'Message content', type: 3, required: true }] }
 ];
 
 // Validate environment
@@ -70,11 +33,7 @@ REQUIRED_ENV.forEach(variable => {
 
 // Initialize Discord client
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
 // Google Sheets setup
@@ -96,6 +55,7 @@ mongoClient.on('error', (err) => {
 let db, formChannelsCollection, lastRowsCollection;
 let formChannels = new Map();
 let interactionState = {};
+
 function clearUserState(userId) {
   if (interactionState[userId]?.timeout) {
     clearTimeout(interactionState[userId].timeout);
@@ -151,14 +111,8 @@ async function fetchResponses(spreadsheetId, sheetName) {
     const sheets = google.sheets({ version: 'v4', auth });
 
     const [headerResponse, dataResponse] = await Promise.all([
-      sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: `'${sheetName}'!1:1`,
-      }),
-      sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: `'${sheetName}'!A2:Z`,
-      })
+      sheets.spreadsheets.values.get({ spreadsheetId, range: `'${sheetName}'!1:1` }),
+      sheets.spreadsheets.values.get({ spreadsheetId, range: `'${sheetName}'!A2:Z` })
     ]);
 
     return {
@@ -460,7 +414,6 @@ async function handleAddForm(interaction) {
   } catch (error) {
     console.error('❌ Addform error:', error);
     clearUserState(interaction.user.id);
-  }
     await interaction.reply({
       embeds: [
         new EmbedBuilder()
@@ -494,18 +447,20 @@ client.on('messageCreate', async message => {
       state.timeout = setTimeout(() => {
         clearUserState(userId);
         message.reply({
-          embeds: [new EmbedBuilder()
-            .setDescription('⌛ Channel selection timed out! Use `/addform` to restart')
-            .setColor(0xFFA500)
+          embeds: [
+            new EmbedBuilder()
+              .setDescription('⌛ Channel selection timed out! Use `/addform` to restart')
+              .setColor(0xFFA500)
           ]
         });
       }, 15000);
 
       await message.reply({
-        embeds: [new EmbedBuilder()
-          .setDescription('Mention the channel to receive responses:')
-          .setFooter({ text: '⏳ Mention a channel within 15 seconds' })
-          .setColor(0x00FF00)
+        embeds: [
+          new EmbedBuilder()
+            .setDescription('Mention the channel to receive responses:')
+            .setFooter({ text: '⏳ Mention a channel within 15 seconds' })
+            .setColor(0x00FF00)
         ]
       });
     }
@@ -527,9 +482,10 @@ client.on('messageCreate', async message => {
       });
 
       await message.reply({
-        embeds: [new EmbedBuilder()
-          .setDescription(`✅ Now tracking ${state.spreadsheet.name} in <#${channelId}>`)
-          .setColor(0x00FF00)
+        embeds: [
+          new EmbedBuilder()
+            .setDescription(`✅ Now tracking ${state.spreadsheet.name} in <#${channelId}>`)
+            .setColor(0x00FF00)
         ]
       });
       clearUserState(userId);
@@ -537,9 +493,10 @@ client.on('messageCreate', async message => {
   } catch (error) {
     clearUserState(userId);
     await message.reply({
-      embeds: [new EmbedBuilder()
-        .setDescription(`❌ ${error.message}. Use \`/addform\` to restart`)
-        .setColor(0xFF0000)
+      embeds: [
+        new EmbedBuilder()
+          .setDescription(`❌ ${error.message}. Use \`/addform\` to restart`)
+          .setColor(0xFF0000)
       ]
     });
   }
@@ -559,4 +516,4 @@ process.on('SIGINT', async () => {
 });
 
 // Start bot
-client.login(process.env.DISCORD_TOKEN);
+client.login(process.env.DISCORD_TOKEN
