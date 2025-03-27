@@ -223,9 +223,15 @@ async function sendResponses(channelId, headers, responses, sheetName) {
 
 // Poll all sheets in parallel
 async function pollSheets() {
-  if (!mongoClient.isConnected()) {
+  // Correct MongoDB connection check
+  if (!mongoClient.topology || !mongoClient.topology.isConnected()) {
     console.log('⚠️ MongoDB disconnected, reconnecting...');
-    await initializeDatabase();
+    try {
+      await initializeDatabase();
+    } catch (error) {
+      console.error('❌ Failed to reconnect to MongoDB:', error);
+      return;
+    }
   }
 
   console.log('🔍 Polling sheets...');
