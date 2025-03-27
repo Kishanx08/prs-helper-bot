@@ -213,6 +213,7 @@ async function sendResponses(channelId, headers, responses, sheetName) {
 
 // Poll all sheets in parallel - UPDATED
 async function pollSheets() {
+  // 1. Connection check
   if (!mongoClient.topology?.isConnected()) {
     console.log('⚠️ MongoDB disconnected, reconnecting...');
     try {
@@ -224,15 +225,20 @@ async function pollSheets() {
   }
 
   console.log('🔍 Polling sheets...');
-  console.log('Debug - formChannels entries:', Array.from(formChannels.entries()));
+  
+  // 2. Convert formChannels to array FIRST
+  const entriesArray = Array.from(formChannels.entries());
+  console.log('Debug - formChannels entries:', entriesArray);
 
-  if (formChannels.size === 0) {
+  if (entriesArray.length === 0) {
     console.log('ℹ️ No spreadsheets being tracked');
     return;
   }
 
-  await Promise.allSettled(
-    async ([key, config]) => {
+  // 3. Create array of promises FIRST
+  const pollingPromises = entriesArray.map(
+    ([key, config]) => {
+      return (async () => {
         try {
           if (!config.spreadsheet_id) {
             console.error('Invalid config for key', key, 'Full config:', config);
@@ -248,8 +254,12 @@ async function pollSheets() {
             spreadsheet_id: config.spreadsheet_id
           });
         }
-      }
-    )
+      })();
+    }
+  );
+
+  // 4. Then pass to Promise.allSettled
+  await Promise.allSettled(pollingPromises);
   console.log('✅ Polling cycle completed');
 }
 
