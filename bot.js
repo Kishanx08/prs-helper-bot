@@ -66,24 +66,98 @@ function clearUserState(userId) {
 // Initialize database
 async function initializeDatabase() {
   try {
+    // Connect with timeout and retry logic
     await mongoClient.connect();
     db = mongoClient.db('prs-helper');
     
+    // Verify collections exist or create them
     formChannelsCollection = db.collection('form_channels');
     lastRowsCollection = db.collection('last_rows');
     
+    // Add schema validation
+    await Promise.all([
+      db.command({
+        collMod: 'form_channels',
+        validator: {
+          $jsonSchema: {
+            bsonType: "object",
+            required: ["spreadsheet_id", "channel_id", "guild_id"],
+            properties: {
+              spreadsheet_id: { bsonType: "string" },
+              channel_id: { bsonType: "string" },
+              guild_id: { bsonType: "string" }
+            }
+          }
+        }
+      }),
+      db.command({
+        collMod: 'last_rows',
+        validator: {
+          $jsonSchema: {
+            bsonType: "object",
+            required: ["spreadsheet_id", "sheet_name", "guild_id"],
+            properties: {
+              spreadsheet_id: { bsonType: "string" },
+              sheet_name: { bsonType: "string" },
+              guild_id: { bsonType: "string" }
+            }
+          }
+        }
+      })
+    ]);
+
+    // Load data with corruption detection
     const docs = await formChannelsCollection.find().toArray();
-    formChannels = new Map(docs.map(doc => [
-      `${doc.guild_id}:${doc.spreadsheet_id}`, // Combine guild ID + spreadsheet ID as key
+    const validDocs = docs.filter(doc => 
+      doc.spreadsheet_id && doc.channel_id && doc.guild_id
+    );
+
+    // Log and clean corrupt entries
+    if (docs.length !== validDocs.length) {
+      const corruptCount = docs.length - validDocs.length;
+      console.warn(`⚠️ Found ${corruptCount} corrupt documents, cleaning...`);
+      await formChannelsCollection.deleteMany({
+        $or: [
+          { spreadsheet_id: { $exists: false } },
+          { channel_id: { $exists: false } },
+          { guild_id: { $exists: false } }
+        ]
+      });
+    }
+
+    // Initialize formChannels Map
+    formChannels = new Map(validDocs.map(doc => [
+      `${doc.guild_id}:${doc.spreadsheet_id}`,
       { 
         channelId: doc.channel_id, 
-        sheet_name: doc.sheet_name,
-        guild_id: doc.guild_id // Add guild_id to stored data
+        sheet_name: doc.sheet_name || 'Sheet1', // Default fallback
+        guild_id: doc.guild_id 
       }
     ]));
-    console.log('✅ MongoDB initialized');
+
+    console.log(`✅ MongoDB initialized with ${formChannels.size} valid form mappings`);
+    
+    // Set up periodic health checks
+    setInterval(async () => {
+      try {
+        await db.command({ ping: 1 });
+        const count = await formChannelsCollection.countDocuments();
+        console.log(`♻️ Database health check OK (${count} forms tracked)`);
+      } catch (err) {
+        console.error('⚠️ Database health check failed:', err);
+      }
+    }, 3600000); // Every hour
+
   } catch (error) {
     console.error('❌ Database initialization failed:', error);
+    
+    // Attempt graceful recovery
+    try {
+      await mongoClient.close();
+    } catch (e) {
+      console.error('Failed to close connection:', e);
+    }
+    
     process.exit(1);
   }
 }
@@ -127,7 +201,7 @@ async function fetchResponses(spreadsheetId, sheetName) {
 }
 
 // Process spreadsheet with retries
-async function processSpreadsheet(spreadsheetId, channelId, retries = 3) {
+async function processSpreadsheet(spreadsheetId, channelId, guildId, retries = 3) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const auth = await getAuthClient();
@@ -143,7 +217,7 @@ async function processSpreadsheet(spreadsheetId, channelId, retries = 3) {
         const lastRowDoc = await lastRowsCollection.findOne({ 
           spreadsheet_id: spreadsheetId,
           sheet_name: sheetName,
-          guild_id: guildId // Add Guild ID filter 
+          guild_id: guildId // Now properly passed from pollSheets
         });
         const lastProcessedRow = lastRowDoc?.last_row || 0;
 
@@ -223,11 +297,11 @@ async function pollSheets() {
 
   await Promise.allSettled(
     Array.from(formChannels.entries()).map(
-      async ([_, { channelId, guild_id, spreadsheet_id }]) => {
+      async ([_, { channelId, guild_id: guildId, spreadsheet_id }]) => {
         try {
-          await processSpreadsheet(spreadsheet_id, channelId, guild_id);
+          await processSpreadsheet(spreadsheet_id, channelId, guildId);
         } catch (error) {
-          console.error(`❌ Failed polling ${spreadsheet_id} in guild ${guild_id}:`, error.message);
+          console.error(`❌ Failed polling ${spreadsheet_id} in guild ${guildId}:`, error.message);
         }
       }
     )
@@ -255,7 +329,9 @@ client.once('ready', async () => {
 
 // Slash command handlers
 client.on('interactionCreate', async interaction => {
-  if (!interaction.isCommand()) return;
+  if (!interaction || !interaction.guild?.id) {
+    console.error('Invalid interaction received');
+    return;
 
   try {
     switch (interaction.commandName) {
