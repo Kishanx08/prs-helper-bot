@@ -309,9 +309,21 @@ client.on('interactionCreate', async interaction => {
         if (entry) {
           formChannels.delete(entry[0]);
           await formChannelsCollection.deleteOne({ spreadsheet_id: entry[0] });
-          await interaction.reply(`✅ Stopped tracking ${spreadsheetName}`);
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription(`✅ Stopped tracking ${spreadsheetName}`)
+                .setColor(0x00FF00)
+            ]
+          });
         } else {
-          await interaction.reply('❌ Spreadsheet not being tracked');
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ Spreadsheet not being tracked')
+                .setColor(0xFF0000)
+            ]
+          });
         }
         break;
 
@@ -321,21 +333,38 @@ client.on('interactionCreate', async interaction => {
             `- ${sheet_name} (${id}) → <#${channelId}>`
           )
           .join('\n') || 'No tracked forms';
-        await interaction.reply(`📋 Tracked Forms:\n${list}`);
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle('📋 Tracked Forms')
+              .setDescription(list)
+              .setColor(0x00FF00)
+          ]
+        });
         break;
 
       case 'ping':
         const latency = Date.now() - interaction.createdTimestamp;
-        await interaction.reply(`🏓 Pong! Latency: ${latency}ms`);
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription(`🏓 Pong! Latency: ${latency}ms`)
+              .setColor(0x00FF00)
+          ]
+        });
         break;
 
       case 'dm':
         // Permission check - replace with your user IDs
         const ALLOWED_USERS = ['1057573344855207966', '456103757676150784', '497307688221409280'];
         if (!ALLOWED_USERS.includes(interaction.user.id)) {
-          return interaction.reply({ 
-            content: '❌ You lack permissions for this', 
-            ephemeral: true 
+          return interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ You lack permissions for this')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
           });
         }
 
@@ -343,22 +372,43 @@ client.on('interactionCreate', async interaction => {
         const text = interaction.options.getString('text');
 
         try {
-          await user.send(`📨 From ${interaction.user.tag}:\n${text}`);
-          await interaction.reply({ 
-            content: `✅ DM sent to ${user.tag}`, 
-            ephemeral: true 
+          await user.send({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle(`📨 From ${interaction.user.tag}`)
+                .setDescription(text)
+                .setColor(0x00FF00)
+            ]
+          });
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription(`✅ DM sent to ${user.tag}`)
+                .setColor(0x00FF00)
+            ],
+            ephemeral: true
           });
         } catch (error) {
-          await interaction.reply({ 
-            content: `❌ Failed to DM ${user.tag} (they may have DMs disabled)`, 
-            ephemeral: true 
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription(`❌ Failed to DM ${user.tag} (they may have DMs disabled)`)
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
           });
         }
         break;
     }
   } catch (error) {
     console.error('❌ Interaction error:', error);
-    await interaction.reply('⚠️ An error occurred');
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setDescription('⚠️ An error occurred')
+          .setColor(0xFF0000)
+      ]
+    });
   }
 });
 
@@ -379,12 +429,24 @@ async function handleAddForm(interaction) {
     };
 
     await interaction.reply({
-      content: `📂 Available Spreadsheets:\n${data.files.map(f => `- ${f.name}`).join('\n')}\n\nType the exact name of the spreadsheet to track:`,
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('📂 Available Spreadsheets')
+          .setDescription(data.files.map(f => `- ${f.name}`).join('\n'))
+          .setColor(0x00FF00)
+          .setFooter({ text: 'Type the exact name of the spreadsheet to track' })
+      ],
       ephemeral: true
     });
   } catch (error) {
     console.error('❌ Addform error:', error);
-    await interaction.reply('⚠️ Failed to fetch spreadsheets');
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setDescription('⚠️ Failed to fetch spreadsheets')
+          .setColor(0xFF0000)
+      ]
+    });
   }
 }
 
@@ -398,16 +460,16 @@ client.on('messageCreate', async message => {
   try {
     if (state.step === 'selectSpreadsheet') {
       const spreadsheet = state.spreadsheets.find(f => f.name === message.content.trim());
-      if (!spreadsheet) return message.reply('❌ Invalid spreadsheet name');
+      if (!spreadsheet) return message.reply({ embeds: [new EmbedBuilder().setDescription('❌ Invalid spreadsheet name').setColor(0xFF0000)] });
 
       state.spreadsheet = spreadsheet;
       state.step = 'selectChannel';
-      await message.reply('Mention the channel to receive responses:');
+      await message.reply({ embeds: [new EmbedBuilder().setDescription('Mention the channel to receive responses:').setColor(0x00FF00)] });
     }
     else if (state.step === 'selectChannel') {
       const channelId = message.mentions.channels.first()?.id;
       if (!channelId) {
-        return message.reply('❌ Please mention a valid text channel');
+        return message.reply({ embeds: [new EmbedBuilder().setDescription('❌ Please mention a valid text channel').setColor(0xFF0000)] });
       }
 
       formChannels.set(state.spreadsheet.id, {
@@ -421,12 +483,12 @@ client.on('messageCreate', async message => {
         spreadsheet_id: state.spreadsheet.id
       });
 
-      await message.reply(`✅ Now tracking ${state.spreadsheet.name} in <#${channelId}>`);
+      await message.reply({ embeds: [new EmbedBuilder().setDescription(`✅ Now tracking ${state.spreadsheet.name} in <#${channelId}>`).setColor(0x00FF00)] });
       delete interactionState[message.author.id];
     }
   } catch (error) {
     console.error('❌ Setup error:', error);
-    await message.reply('⚠️ Setup failed');
+    await message.reply({ embeds: [new EmbedBuilder().setDescription('⚠️ Setup failed').setColor(0xFF0000)] });
   }
 });
 
