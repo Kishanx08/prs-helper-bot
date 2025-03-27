@@ -3,6 +3,9 @@ const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes } = require('disco
 const { google } = require('googleapis');
 const { MongoClient } = require('mongodb');
 const express = require('express');
+process.on('unhandledRejection', (error) => {
+  console.error('Unhandled Promise Rejection:', error);
+});
 
 // Slash commands configuration
 const commands = [
@@ -79,7 +82,13 @@ async function initializeDatabase() {
     lastRowsCollection = db.collection('last_rows');
     
     const docs = await formChannelsCollection.find().toArray();
-    formChannels = new Map(docs.map(doc => [doc.spreadsheet_id, doc]));
+    formChannels = new Map(docs.map(doc => [
+      doc.spreadsheet_id, 
+      { 
+        channelId: doc.channel_id, 
+        sheet_name: doc.sheet_name 
+      }
+    ]));
     console.log('✅ MongoDB initialized');
   } catch (error) {
     console.error('❌ Database initialization failed:', error);
