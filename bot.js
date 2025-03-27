@@ -96,6 +96,12 @@ mongoClient.on('error', (err) => {
 let db, formChannelsCollection, lastRowsCollection;
 let formChannels = new Map();
 let interactionState = {};
+function clearUserState(userId) {
+  if (interactionState[userId]?.timeout) {
+    clearTimeout(interactionState[userId].timeout);
+  }
+  delete interactionState[userId];
+}
 
 // Initialize database
 async function initializeDatabase() {
@@ -415,6 +421,8 @@ client.on('interactionCreate', async interaction => {
 // Form setup flow
 async function handleAddForm(interaction) {
   try {
+    clearUserState(interaction.user.id);
+
     const auth = await getAuthClient();
     const drive = google.drive({ version: 'v3', auth });
     
@@ -426,6 +434,16 @@ async function handleAddForm(interaction) {
     interactionState[interaction.user.id] = {
       step: 'selectSpreadsheet',
       spreadsheets: data.files
+      timeout: setTimeout(() => {
+        clearUserState(interaction.user.id);
+        interaction.followUp({
+          embeds: [new EmbedBuilder()
+            .setDescription('⌛ Timed out! Use `/addform` again to restart')
+            .setColor(0xFFA500)
+          ],
+          ephemeral: true
+        });
+      }, 15000) // 15-second timeout
     };
 
     await interaction.reply({
@@ -433,13 +451,15 @@ async function handleAddForm(interaction) {
         new EmbedBuilder()
           .setTitle('📂 Available Spreadsheets')
           .setDescription(data.files.map(f => `- ${f.name}`).join('\n'))
+          .setFooter({ text: '⏳ Reply with the exact name within 15 seconds' })
           .setColor(0x00FF00)
-          .setFooter({ text: 'Type the exact name of the spreadsheet to track' })
       ],
       ephemeral: true
     });
   } catch (error) {
     console.error('❌ Addform error:', error);
+    clearUserState(interaction.user.id);
+  }
     await interaction.reply({
       embeds: [
         new EmbedBuilder()
@@ -454,22 +474,44 @@ async function handleAddForm(interaction) {
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
 
-  const state = interactionState[message.author.id];
+  const userId = message.author.id;
+  const state = interactionState[userId];
   if (!state) return;
 
   try {
+    // Clear the previous timeout
+    clearTimeout(state.timeout);
+
     if (state.step === 'selectSpreadsheet') {
       const spreadsheet = state.spreadsheets.find(f => f.name === message.content.trim());
-      if (!spreadsheet) return message.reply({ embeds: [new EmbedBuilder().setDescription('❌ Invalid spreadsheet name').setColor(0xFF0000)] });
+      if (!spreadsheet) {
+        throw new Error('Invalid spreadsheet name');
+      }
 
       state.spreadsheet = spreadsheet;
       state.step = 'selectChannel';
-      await message.reply({ embeds: [new EmbedBuilder().setDescription('Mention the channel to receive responses:').setColor(0x00FF00)] });
+      state.timeout = setTimeout(() => {
+        clearUserState(userId);
+        message.reply({
+          embeds: [new EmbedBuilder()
+            .setDescription('⌛ Channel selection timed out! Use `/addform` to restart')
+            .setColor(0xFFA500)
+          ]
+        });
+      }, 15000);
+
+      await message.reply({
+        embeds: [new EmbedBuilder()
+          .setDescription('Mention the channel to receive responses:')
+          .setFooter({ text: '⏳ Mention a channel within 15 seconds' })
+          .setColor(0x00FF00)
+        ]
+      });
     }
     else if (state.step === 'selectChannel') {
       const channelId = message.mentions.channels.first()?.id;
       if (!channelId) {
-        return message.reply({ embeds: [new EmbedBuilder().setDescription('❌ Please mention a valid text channel').setColor(0xFF0000)] });
+        throw new Error('No channel mentioned');
       }
 
       formChannels.set(state.spreadsheet.id, {
@@ -483,12 +525,22 @@ client.on('messageCreate', async message => {
         spreadsheet_id: state.spreadsheet.id
       });
 
-      await message.reply({ embeds: [new EmbedBuilder().setDescription(`✅ Now tracking ${state.spreadsheet.name} in <#${channelId}>`).setColor(0x00FF00)] });
-      delete interactionState[message.author.id];
+      await message.reply({
+        embeds: [new EmbedBuilder()
+          .setDescription(`✅ Now tracking ${state.spreadsheet.name} in <#${channelId}>`)
+          .setColor(0x00FF00)
+        ]
+      });
+      clearUserState(userId);
     }
   } catch (error) {
-    console.error('❌ Setup error:', error);
-    await message.reply({ embeds: [new EmbedBuilder().setDescription('⚠️ Setup failed').setColor(0xFF0000)] });
+    clearUserState(userId);
+    await message.reply({
+      embeds: [new EmbedBuilder()
+        .setDescription(`❌ ${error.message}. Use \`/addform\` to restart`)
+        .setColor(0xFF0000)
+      ]
+    });
   }
 });
 
