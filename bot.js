@@ -516,4 +516,4 @@ process.on('SIGINT', async () => {
 });
 
 // Start bot
-client.login(process.env.DISCORD_TOKEN
+client.login(process.env.DISCORD_TOKEN);
