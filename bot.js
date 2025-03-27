@@ -42,6 +42,24 @@ const commands = [
     name: 'ping',
     description: 'Check bot latency and API status',
   },
+  {
+    name: 'dm',
+    description: 'Send a DM through the bot',
+    options: [
+      {
+        name: 'user',
+        description: 'User to DM',
+        type: 6, // USER type
+        required: true
+      },
+      {
+        name: 'text',
+        description: 'Message content',
+        type: 3, // STRING type
+        required: true
+      }
+    ]
+  }
 ];
 
 // Validate environment
@@ -309,6 +327,33 @@ client.on('interactionCreate', async interaction => {
       case 'ping':
         const latency = Date.now() - interaction.createdTimestamp;
         await interaction.reply(`🏓 Pong! Latency: ${latency}ms`);
+        break;
+
+      case 'dm':
+        // Permission check - replace with your user IDs
+        const ALLOWED_USERS = ['1057573344855207966', '456103757676150784', '497307688221409280'];
+        if (!ALLOWED_USERS.includes(interaction.user.id)) {
+          return interaction.reply({ 
+            content: '❌ You lack permissions for this', 
+            ephemeral: true 
+          });
+        }
+
+        const user = interaction.options.getUser('user');
+        const text = interaction.options.getString('text');
+
+        try {
+          await user.send(`📨 From ${interaction.user.tag}:\n${text}`);
+          await interaction.reply({ 
+            content: `✅ DM sent to ${user.tag}`, 
+            ephemeral: true 
+          });
+        } catch (error) {
+          await interaction.reply({ 
+            content: `❌ Failed to DM ${user.tag} (they may have DMs disabled)`, 
+            ephemeral: true 
+          });
+        }
         break;
     }
   } catch (error) {
