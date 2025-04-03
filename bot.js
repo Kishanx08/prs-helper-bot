@@ -18,8 +18,6 @@ const limiter = new RateLimiter({ tokensPerInterval: 50, interval: 'minute' });
 
 // Slash commands
 const commands = [
-  { name: 'status', description: 'Change the bot status', options: [{ name: 'status', description: 'New status message', type: 3, required: true }, { name: 'type', description: 'Type of status (playing, streaming, listening, watching)', type: 3, required: false }] },
-  { name: 'clearstatus', description: 'Clear the bot status' },
   { name: 'addform', description: 'Start tracking a Google Form' },
   { name: 'removeform', description: 'Stop tracking a Google Form', options: [{ name: 'sheetname', description: 'Name of the Google Sheet', type: 3, required: true }] },
   { name: 'listforms', description: 'List all tracked forms' },
@@ -290,53 +288,6 @@ client.on('interactionCreate', async interaction => {
   }
   try {
     switch (interaction.commandName) {
-      case 'status':
-        const newStatus = interaction.options.getString('status');
-        const statusType = interaction.options.getString('type') || 'playing';
-        const validTypes = ['playing', 'streaming', 'listening', 'watching'];
-
-        if (!validTypes.includes(statusType.toLowerCase())) {
-          await interaction.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setDescription('❌ Invalid status type. Valid types are: playing, streaming, listening, watching.')
-                .setColor(0xFF0000)
-            ],
-            ephemeral: true
-          });
-          return;
-        }
-
-        const activities = {
-          playing: { name: newStatus, type: 'PLAYING' },
-          streaming: { name: newStatus, type: 'STREAMING', url: 'https://twitch.tv/yourstream' }, // Update with your stream URL
-          listening: { name: newStatus, type: 'LISTENING' },
-          watching: { name: newStatus, type: 'WATCHING' }
-        };
-
-        client.user.setPresence({ activities: [activities[statusType.toLowerCase()]] });
-        await interaction.reply({
-          embeds: [
-            new EmbedBuilder()
-              .setDescription(`✅ Status updated to: ${statusType.charAt(0).toUpperCase() + statusType.slice(1)} ${newStatus}`)
-              .setColor(0x00FF00)
-          ],
-          ephemeral: true
-        });
-        break;
-
-      case 'clearstatus':
-        client.user.setPresence({ activities: [] });
-        await interaction.reply({
-          embeds: [
-            new EmbedBuilder()
-              .setDescription('✅ Status cleared')
-              .setColor(0x00FF00)
-          ],
-          ephemeral: true
-        });
-        break; 
-        
       case 'addform':
         await handleAddForm(interaction);
         break;
