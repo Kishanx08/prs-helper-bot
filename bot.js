@@ -22,7 +22,8 @@ const commands = [
   { name: 'removeform', description: 'Stop tracking a Google Form', options: [{ name: 'sheetname', description: 'Name of the Google Sheet', type: 3, required: true }] },
   { name: 'listforms', description: 'List all tracked forms' },
   { name: 'ping', description: 'Check bot latency and API status' },
-  { name: 'dm', description: 'Send a DM through the bot', options: [{ name: 'user', description: 'User to DM', type: 6, required: true }, { name: 'text', description: 'Message content', type: 3, required: true }] }
+  { name: 'dm', description: 'Send a DM through the bot', options: [{ name: 'user', description: 'User to DM', type: 6, required: true }, { name: 'text', description: 'Message content', type: 3, required: true }] },
+  { name: 'checkupdates ', description: 'Manually check for any unsent form responses'}
 ];
 
 // Validate environment
@@ -400,31 +401,80 @@ client.on('interactionCreate', async interaction => {
           });
         }
         break;
-
-      default:
+       
+        case 'checkupdates':
+          try {
+            // Acknowledge the interaction immediately since polling might take time
+            await interaction.deferReply({ ephemeral: true });
+            
+            // Run the polling function
+            await pollSheets();
+            
+            // Get all forms in the current guild
+            const guildForms = Array.from(formChannels.values())
+              .filter(config => config.guild_id === interaction.guild.id);
+            
+            if (guildForms.length === 0) {
+              await interaction.editReply({
+                embeds: [
+                  new EmbedBuilder()
+                    .setDescription('ℹ️ No forms are being tracked in this server')
+                    .setColor(0xFFFF00)
+                ]
+              });
+              return;
+            }
+            
+            await interaction.editReply({
+              embeds: [
+                new EmbedBuilder()
+                  .setDescription('✅ Successfully checked for updates on all tracked forms')
+                  .setColor(0x00FF00)
+                  .addFields(
+                    guildForms.map(form => ({
+                      name: form.sheet_name,
+                      value: `Posting to: <#${form.channelId}>`,
+                      inline: true
+                    }))
+                  )
+              ]
+            });
+          } catch (error) {
+            console.error('Checkupdates error:', error);
+            await interaction.editReply({
+              embeds: [
+                new EmbedBuilder()
+                  .setDescription('❌ Failed to check for updates')
+                  .setColor(0xFF0000)
+              ]
+            });
+          }
+          break;
+  
+        default:
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ Unknown command')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
+          });
+      }
+    } catch (error) {
+      console.error('❌ Interaction error:', error);
+      if (!interaction.replied && !interaction.deferred) {
         await interaction.reply({
           embeds: [
             new EmbedBuilder()
-              .setDescription('❌ Unknown command')
+              .setDescription('⚠️ An error occurred')
               .setColor(0xFF0000)
           ],
           ephemeral: true
         });
+      }
     }
-  } catch (error) {
-    console.error('❌ Interaction error:', error);
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setDescription('⚠️ An error occurred')
-            .setColor(0xFF0000)
-        ],
-        ephemeral: true
-      });
-    }
-  }
-});
+  });
 
 // Form setup flow
 async function handleAddForm(interaction) {
