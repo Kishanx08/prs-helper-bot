@@ -23,6 +23,7 @@ const commands = [
   { name: 'listforms', description: 'List all tracked forms' },
   { name: 'ping', description: 'Check bot latency and API status' },
   { name: 'dm', description: 'Send a DM through the bot', options: [{ name: 'user', description: 'User to DM', type: 6, required: true }, { name: 'text', description: 'Message content', type: 3, required: true }] }
+  { name: 'status', description: 'Change the bot status', options: [{ name: 'status', description: 'New status message', type: 3, required: true }] } 
 ];
 
 // Validate environment
@@ -400,6 +401,26 @@ client.on('interactionCreate', async interaction => {
           });
         }
         break;
+      case 'status':
+        const newStatus = interaction.options.getString('status');
+        client.user.setPresence({ activities: [{ name: newStatus }] });
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription(`✅ Status updated to: ${newStatus}`)
+              .setColor(0x00FF00)
+        ]
+      });
+      break;
+        
+      default:
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription('❌ Unknown command')
+              .setColor(0xFF0000)
+          ]
+        });
     }
   } catch (error) {
     console.error('❌ Interaction error:', error);
