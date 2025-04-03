@@ -18,12 +18,13 @@ const limiter = new RateLimiter({ tokensPerInterval: 50, interval: 'minute' });
 
 // Slash commands
 const commands = [
+  { name: 'status', description: 'Change the bot status', options: [{ name: 'status', description: 'New status message', type: 3, required: true }, { name: 'type', description: 'Type of status (playing, streaming, listening, watching)', type: 3, required: false }] },
+  { name: 'clearstatus', description: 'Clear the bot status' },
   { name: 'addform', description: 'Start tracking a Google Form' },
   { name: 'removeform', description: 'Stop tracking a Google Form', options: [{ name: 'sheetname', description: 'Name of the Google Sheet', type: 3, required: true }] },
   { name: 'listforms', description: 'List all tracked forms' },
   { name: 'ping', description: 'Check bot latency and API status' },
-  { name: 'dm', description: 'Send a DM through the bot', options: [{ name: 'user', description: 'User to DM', type: 6, required: true }, { name: 'text', description: 'Message content', type: 3, required: true }] },
-  { name: 'status', description: 'Change the bot status', options: [{ name: 'status', description: 'New status message', type: 3, required: true }, { name: 'type', description: 'Type of status (playing, streaming, listening, watching)', type: 3, required: false }] }
+  { name: 'dm', description: 'Send a DM through the bot', options: [{ name: 'user', description: 'User to DM', type: 6, required: true }, { name: 'text', description: 'Message content', type: 3, required: true }] }
 ];
 
 // Validate environment
