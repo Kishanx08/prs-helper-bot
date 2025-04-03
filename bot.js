@@ -23,7 +23,7 @@ const commands = [
   { name: 'listforms', description: 'List all tracked forms' },
   { name: 'ping', description: 'Check bot latency and API status' },
   { name: 'dm', description: 'Send a DM through the bot', options: [{ name: 'user', description: 'User to DM', type: 6, required: true }, { name: 'text', description: 'Message content', type: 3, required: true }] },
-  { name: 'checkupdates ', description: 'Manually check for any unsent form responses'}
+  { name: 'checkupdates', description: 'Manually check for any unsent form responses'}
 ];
 
 // Validate environment
