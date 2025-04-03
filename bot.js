@@ -276,7 +276,7 @@ client.once('ready', async () => {
     console.error('❌ Failed to register commands:', error);
   }
   
-  setInterval(pollSheets, 60000);
+  setInterval(pollSheets, 900000);
   console.log('✅ Bot operational');
 });
 
