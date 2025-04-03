@@ -282,68 +282,115 @@ client.once('ready', async () => {
 });
 
 // Slash command handlers
-client.on('interactionCreate', async interaction => {
+on('interactionCreate', async interaction => {
   if (!interaction || !interaction.guild?.id) {
     console.error('Invalid interaction received');
     return;
   }
   try {
     switch (interaction.commandName) {
+      case 'status':
+        const newStatus = interaction.options.getString('status');
+        const statusType = interaction.options.getString('type') || 'playing';
+        const validTypes = ['playing', 'streaming', 'listening', 'watching'];
+
+        if (!validTypes.includes(statusType.toLowerCase())) {
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ Invalid status type. Valid types are: playing, streaming, listening, watching.')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
+          });
+          return;
+        }
+
+        const activities = {
+          playing: { name: newStatus, type: 'PLAYING' },
+          streaming: { name: newStatus, type: 'STREAMING', url: 'https://twitch.tv/yourstream' }, // Update with your stream URL
+          listening: { name: newStatus, type: 'LISTENING' },
+          watching: { name: newStatus, type: 'WATCHING' }
+        };
+
+        client.user.setPresence({ activities: [activities[statusType.toLowerCase()]] });
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription(`✅ Status updated to: ${statusType.charAt(0).toUpperCase() + statusType.slice(1)} ${newStatus}`)
+              .setColor(0x00FF00)
+          ],
+          ephemeral: true
+        });
+        break;
+
+      case 'clearstatus':
+        client.user.setPresence({ activities: [] });
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription('✅ Status cleared')
+              .setColor(0x00FF00)
+          ],
+          ephemeral: true
+        });
+        break;
+
       case 'addform':
         await handleAddForm(interaction);
         break;
       
       case 'removeform':
-          const spreadsheetName = interaction.options.getString('sheetname');
-          
-          // Only look for forms in current server
-          const entry = [...formChannels.entries()].find(
-            ([_, config]) => config.sheet_name === spreadsheetName && 
-            config.guild_id === interaction.guild.id
-          );
-          
-          if (entry) {
-            formChannels.delete(entry[0]);
-            await formChannelsCollection.deleteOne({ 
-              spreadsheet_id: entry[1].spreadsheet_id,
-              guild_id: interaction.guild.id // Only delete from current server
-            });
-            await interaction.reply({
-              embeds: [
-                new EmbedBuilder()
-                  .setDescription(`✅ Stopped tracking ${spreadsheetName}`)
-                  .setColor(0x00FF00)
+        const spreadsheetName = interaction.options.getString('sheetname');
+        
+        // Only look for forms in current server
+        const entry = [...formChannels.entries()].find(
+          ([_, config]) => config.sheet_name === spreadsheetName && 
+          config.guild_id === interaction.guild.id
+        );
+        
+        if (entry) {
+          formChannels.delete(entry[0]);
+          await formChannelsCollection.deleteOne({ 
+            spreadsheet_id: entry[1].spreadsheet_id,
+            guild_id: interaction.guild.id // Only delete from current server
+          });
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription(`✅ Stopped tracking ${spreadsheetName}`)
+                .setColor(0x00FF00)
+            ]
+          });
+        } else {
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ Spreadsheet not being tracked in this server')
+                .setColor(0xFF0000)
               ]
-            });
-          } else {
-            await interaction.reply({
-              embeds: [
-                new EmbedBuilder()
-                  .setDescription('❌ Spreadsheet not being tracked in this server')
-                  .setColor(0xFF0000)
-              ]
-            });
-          }
-          break;
+          });
+        }
+        break;
 
       case 'listforms':
-            // Only show forms from current server
-            const list = Array.from(formChannels)
-              .filter(([_, config]) => config.guild_id === interaction.guild.id)
-              .map(([_, { channelId, sheet_name }]) => 
-                `- ${sheet_name} → <#${channelId}>`
-              )
-              .join('\n') || 'No tracked forms in this server';
-            
-            await interaction.reply({
-              embeds: [
-                new EmbedBuilder()
-                  .setTitle('📋 Tracked Forms')
-                  .setDescription(list)
-                  .setColor(0x00FF00)
-              ]
-            });
-            break;
+        // Only show forms from current server
+        const list = Array.from(formChannels)
+          .filter(([_, config]) => config.guild_id === interaction.guild.id)
+          .map(([_, { channelId, sheet_name }]) => 
+            `- ${sheet_name} → <#${channelId}>`
+          )
+          .join('\n') || 'No tracked forms in this server';
+        
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle('📋 Tracked Forms')
+              .setDescription(list)
+              .setColor(0x00FF00)
+          ]
+        });
+        break;
 
       case 'ping':
         const latency = Date.now() - interaction.createdTimestamp;
@@ -401,59 +448,29 @@ client.on('interactionCreate', async interaction => {
           });
         }
         break;
-      case 'status':
-        const newStatus = interaction.options.getString('status');
-        const statusType = interaction.options.getString('type') || 'playing';
-        const validTypes = ['playing', 'streaming', 'listening', 'watching'];
-  
-        if (!validTypes.includes(statusType.toLowerCase())) {
-          await interaction.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setDescription('❌ Invalid status type. Valid types are: playing, streaming, listening, watching.')
-                .setColor(0xFF0000)
-            ],
-            ephemeral: true
-          });
-          return;
-        }
-  
-        const activities = {
-          playing: { name: newStatus, type: 'PLAYING' },
-          streaming: { name: newStatus, type: 'STREAMING', url: 'https://twitch.tv/yourstream' }, // Update with your stream URL
-          listening: { name: newStatus, type: 'LISTENING' },
-          watching: { name: newStatus, type: 'WATCHING' }
-        };
-  
-        client.user.setPresence({ activities: [activities[statusType.toLowerCase()]] });
-        await interaction.reply({
-          embeds: [
-            new EmbedBuilder()
-              .setDescription(`✅ Status updated to: ${statusType.charAt(0).toUpperCase() + statusType.slice(1)} ${newStatus}`)
-              .setColor(0x00FF00)
-          ],
-          ephemeral: true
-        });
-        break;
-        
+
       default:
         await interaction.reply({
           embeds: [
             new EmbedBuilder()
               .setDescription('❌ Unknown command')
               .setColor(0xFF0000)
-          ]
+          ],
+          ephemeral: true
         });
     }
   } catch (error) {
     console.error('❌ Interaction error:', error);
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setDescription('⚠️ An error occurred')
-          .setColor(0xFF0000)
-      ]
-    });
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setDescription('⚠️ An error occurred')
+            .setColor(0xFF0000)
+        ],
+        ephemeral: true
+      });
+    }
   }
 });
 
