@@ -23,7 +23,7 @@ const commands = [
   { name: 'listforms', description: 'List all tracked forms' },
   { name: 'ping', description: 'Check bot latency and API status' },
   { name: 'dm', description: 'Send a DM through the bot', options: [{ name: 'user', description: 'User to DM', type: 6, required: true }, { name: 'text', description: 'Message content', type: 3, required: true }] },
-  { name: 'status', description: 'Change the bot status', options: [{ name: 'status', description: 'New status message', type: 3, required: true }] }
+  { name: 'status', description: 'Change the bot status', options: [{ name: 'status', description: 'New status message', type: 3, required: true }, { name: 'type', description: 'Type of status (playing, streaming, listening, watching)', type: 3, required: false }] }
 ];
 
 // Validate environment
@@ -403,15 +403,38 @@ client.on('interactionCreate', async interaction => {
         break;
       case 'status':
         const newStatus = interaction.options.getString('status');
-        client.user.setPresence({ activities: [{ name: newStatus }] });
+        const statusType = interaction.options.getString('type') || 'playing';
+        const validTypes = ['playing', 'streaming', 'listening', 'watching'];
+  
+        if (!validTypes.includes(statusType.toLowerCase())) {
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ Invalid status type. Valid types are: playing, streaming, listening, watching.')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
+          });
+          return;
+        }
+  
+        const activities = {
+          playing: { name: newStatus, type: 'PLAYING' },
+          streaming: { name: newStatus, type: 'STREAMING', url: 'https://twitch.tv/yourstream' }, // Update with your stream URL
+          listening: { name: newStatus, type: 'LISTENING' },
+          watching: { name: newStatus, type: 'WATCHING' }
+        };
+  
+        client.user.setPresence({ activities: [activities[statusType.toLowerCase()]] });
         await interaction.reply({
           embeds: [
             new EmbedBuilder()
-              .setDescription(`✅ Status updated to: ${newStatus}`)
+              .setDescription(`✅ Status updated to: ${statusType.charAt(0).toUpperCase() + statusType.slice(1)} ${newStatus}`)
               .setColor(0x00FF00)
-        ]
-      });
-      break;
+          ],
+          ephemeral: true
+        });
+        break;
         
       default:
         await interaction.reply({
