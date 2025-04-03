@@ -282,7 +282,7 @@ client.once('ready', async () => {
 });
 
 // Slash command handlers
-on('interactionCreate', async interaction => {
+client.on('interactionCreate', async interaction => {
   if (!interaction || !interaction.guild?.id) {
     console.error('Invalid interaction received');
     return;
