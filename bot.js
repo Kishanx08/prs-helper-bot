@@ -334,8 +334,8 @@ client.on('interactionCreate', async interaction => {
           ],
           ephemeral: true
         });
-        break;
-
+        break; 
+        
       case 'addform':
         await handleAddForm(interaction);
         break;
