@@ -18,12 +18,109 @@ const limiter = new RateLimiter({ tokensPerInterval: 50, interval: 'minute' });
 
 // Slash commands
 const commands = [
-  { name: 'addform', description: 'Start tracking a Google Form' },
-  { name: 'removeform', description: 'Stop tracking a Google Form', options: [{ name: 'sheetname', description: 'Name of the Google Sheet', type: 3, required: true }] },
-  { name: 'listforms', description: 'List all tracked forms' },
-  { name: 'ping', description: 'Check bot latency and API status' },
-  { name: 'dm', description: 'Send a DM through the bot', options: [{ name: 'user', description: 'User to DM', type: 6, required: true }, { name: 'text', description: 'Message content', type: 3, required: true }] },
-  { name: 'checkupdates', description: 'Manually check for any unsent form responses'}
+  { 
+    name: 'addform', 
+    description: 'Start tracking a Google Form' 
+  },
+  { 
+    name: 'removeform', 
+    description: 'Stop tracking a Google Form', 
+    options: [
+      { 
+        name: 'sheetname', 
+        description: 'Name of the Google Sheet', 
+        type: 3, 
+        required: true 
+      }
+    ] 
+  },
+  { 
+    name: 'listforms', 
+    description: 'List all tracked forms' 
+  },
+  { 
+    name: 'ping', 
+    description: 'Check bot latency and API status' 
+  },
+  { 
+    name: 'dm', 
+    description: 'Send a DM through the bot', 
+    options: [
+      { 
+        name: 'user', 
+        description: 'User to DM', 
+        type: 6, 
+        required: true 
+      }, 
+      { 
+        name: 'text', 
+        description: 'Message content', 
+        type: 3, 
+        required: true 
+      }
+    ] 
+  },
+  { 
+    name: 'checkupdates', 
+    description: 'Manually check for any unsent form responses'
+  },
+  //  permission commands
+  { 
+    name: 'giveperms', 
+    description: 'Grant permissions to a user',
+    options: [
+      { 
+        name: 'user', 
+        description: 'User to grant permissions to', 
+        type: 6, 
+        required: true 
+      },
+      { 
+        name: 'permission', 
+        description: 'Permission to grant', 
+        type: 3, 
+        required: true,
+        choices: [
+          { name: 'Manage Forms (add/remove/list)', value: 'manage_forms' },
+          { name: 'Send DMs through bot', value: 'send_dms' }
+        ]
+      }
+    ]
+  },
+  { 
+    name: 'revokeperms', 
+    description: 'Revoke permissions from a user',
+    options: [
+      { 
+        name: 'user', 
+        description: 'User to revoke permissions from', 
+        type: 6, 
+        required: true 
+      },
+      { 
+        name: 'permission', 
+        description: 'Permission to revoke', 
+        type: 3, 
+        required: true,
+        choices: [
+          { name: 'Manage Forms (add/remove/list)', value: 'manage_forms' },
+          { name: 'Send DMs through bot', value: 'send_dms' }
+        ]
+      }
+    ]
+  },
+  { 
+    name: 'checkperms', 
+    description: 'Check a user\'s permissions',
+    options: [
+      { 
+        name: 'user', 
+        description: 'User to check (leave empty for yourself)', 
+        type: 6, 
+        required: false 
+      }
+    ]
+  }
 ];
 
 // Validate environment
@@ -304,41 +401,59 @@ client.on('interactionCreate', async interaction => {
   try {
     switch (interaction.commandName) {
       case 'addform':
-        await handleAddForm(interaction);
-        break;
-      
       case 'removeform':
-        const spreadsheetName = interaction.options.getString('sheetname');
-        
-        // Only look for forms in current server
-        const entry = [...formChannels.entries()].find(
-          ([_, config]) => config.sheet_name === spreadsheetName && 
-          config.guild_id === interaction.guild.id
-        );
-        
-        if (entry) {
-          formChannels.delete(entry[0]);
-          await formChannelsCollection.deleteOne({ 
-            spreadsheet_id: entry[1].spreadsheet_id,
-            guild_id: interaction.guild.id // Only delete from current server
-          });
-          await interaction.reply({
+      case 'listforms':
+        // Permission check for all form-related commands
+        if (!await hasPermission(interaction.user.id, interaction.guild.id, 'manage_forms')) {
+          return interaction.reply({
             embeds: [
               new EmbedBuilder()
-                .setDescription(`✅ Stopped tracking ${spreadsheetName}`)
-                .setColor(0x00FF00)
-            ]
-          });
-        } else {
-          await interaction.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setDescription('❌ Spreadsheet not being tracked in this server')
+                .setDescription('❌ You need "manage_forms" permission to use this command')
                 .setColor(0xFF0000)
-              ]
+            ],
+            ephemeral: true
           });
         }
-        break;
+
+        // Now handle each specific command
+        if (interaction.commandName === 'addform') {
+          await handleAddForm(interaction);
+          break;
+        }
+        
+        if (interaction.commandName === 'removeform') {
+          const spreadsheetName = interaction.options.getString('sheetname');
+          
+          // Only look for forms in current server
+          const entry = [...formChannels.entries()].find(
+            ([_, config]) => config.sheet_name === spreadsheetName && 
+            config.guild_id === interaction.guild.id
+          );
+          
+          if (entry) {
+            formChannels.delete(entry[0]);
+            await formChannelsCollection.deleteOne({ 
+              spreadsheet_id: entry[1].spreadsheet_id,
+              guild_id: interaction.guild.id
+            });
+            await interaction.reply({
+              embeds: [
+                new EmbedBuilder()
+                  .setDescription(`✅ Stopped tracking ${spreadsheetName}`)
+                  .setColor(0x00FF00)
+              ]
+            });
+          } else {
+            await interaction.reply({
+              embeds: [
+                new EmbedBuilder()
+                  .setDescription('❌ Spreadsheet not being tracked in this server')
+                  .setColor(0xFF0000)
+              ]
+            });
+          }
+          break;
+        }
 
       case 'listforms':
         // Only show forms from current server
@@ -371,22 +486,22 @@ client.on('interactionCreate', async interaction => {
         break;
 
       case 'dm':
-        // Permission check - replace with your user IDs
-        const ALLOWED_USERS = ['1057573344855207966', '456103757676150784', '497307688221409280'];
-        if (!ALLOWED_USERS.includes(interaction.user.id)) {
+        // Permission check - must come FIRST
+        if (!await hasPermission(interaction.user.id, interaction.guild.id, 'send_dms')) {
           return interaction.reply({
             embeds: [
               new EmbedBuilder()
-                .setDescription('❌ You lack permissions for this')
+                .setDescription('❌ You need "send_dms" permission to use this command')
                 .setColor(0xFF0000)
             ],
             ephemeral: true
           });
         }
-
+  
+        // Original DM command handling
         const user = interaction.options.getUser('user');
         const text = interaction.options.getString('text');
-
+  
         try {
           await user.send({
             embeds: [
@@ -408,8 +523,8 @@ client.on('interactionCreate', async interaction => {
           await interaction.reply({
             embeds: [
               new EmbedBuilder()
-                .setDescription(`❌ Failed to DM ${user.tag} (they may have DMs disabled)`)
-                .setColor(0xFF0000)
+                  .setDescription(`❌ Failed to DM ${user.tag} (they may have DMs disabled)`)
+                  .setColor(0xFF0000)
             ],
             ephemeral: true
           });
@@ -465,6 +580,92 @@ client.on('interactionCreate', async interaction => {
             });
           }
           break;
+
+      case 'giveperms':
+          const userToPermit = interaction.options.getUser('user');
+          const permissionToGrant = interaction.options.getString('permission');
+
+          await permissionsCollection.updateOne(
+            {
+              user_id: userToPermit.id,
+              guild_id: interaction.guild.id,
+              permission: permissionToGrant
+            },
+            { $set: { 
+              user_id: userToPermit.id,
+              guild_id: interaction.guild.id,
+              permission: permissionToGrant,
+              granted_by: interaction.user.id,
+              granted_at: new Date()
+            }},
+            { upsert: true }
+          );
+
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription(`✅ Granted ${permissionToGrant} permission to ${userToPermit.tag}`)
+                .setColor(0x00FF00)
+            ],
+            ephemeral: true
+          });
+          break;
+
+      case 'revokeperms':
+          const userToRevoke = interaction.options.getUser('user');
+          const permissionToRevoke = interaction.options.getString('permission');
+
+          const result = await permissionsCollection.deleteOne({
+            user_id: userToRevoke.id,
+            guild_id: interaction.guild.id,
+            permission: permissionToRevoke
+          });
+
+          if (result.deletedCount > 0) {
+            await interaction.reply({
+              embeds: [
+                new EmbedBuilder()
+                  .setDescription(`✅ Revoked ${permissionToRevoke} permission from ${userToRevoke.tag}`)
+                  .setColor(0x00FF00)
+              ],
+              ephemeral: true
+            });
+          } else {
+            await interaction.reply({
+              embeds: [
+                new EmbedBuilder()
+                  .setDescription(`ℹ️ ${userToRevoke.tag} didn't have ${permissionToRevoke} permission`)
+                  .setColor(0xFFFF00)
+              ],
+              ephemeral: true
+            });
+          }
+          break;
+
+      case 'checkperms':
+          const targetUser = interaction.options.getUser('user') || interaction.user;
+          const userPermissions = await permissionsCollection.find({
+            user_id: targetUser.id,
+            guild_id: interaction.guild.id
+          }).toArray();
+
+          const permissionList = userPermissions.length > 0 
+             ? userPermissions.map(p => `• ${p.permission}`).join('\n')
+             : 'No special permissions';
+
+             await interaction.reply({
+              embeds: [
+                new EmbedBuilder()
+                  .setTitle(`🔐 Permissions for ${targetUser.tag}`)
+                  .setDescription(permissionList)
+                  .setColor(0x00FFFF)
+                  .setFooter({ text: 'Administrators have all permissions by default' })
+              ],
+              ephemeral: true
+            });
+            break;
+
+          
   
         default:
           await interaction.reply({
