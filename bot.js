@@ -402,44 +402,45 @@ client.on('interactionCreate', async interaction => {
         }
         break;
        
-        case 'checkupdates':
-          try {
-            // Acknowledge the interaction immediately since polling might take time
-            await interaction.deferReply({ ephemeral: true });
+      case 'checkupdates':
+        try {
+          // Acknowledge the interaction immediately since polling might take time
+          await interaction.deferReply({ ephemeral: true });
             
-            // Run the polling function
-            await pollSheets();
+          // Run the polling function
+          await pollSheets();
             
-            // Get all forms in the current guild
-            const guildForms = Array.from(formChannels.values())
-              .filter(config => config.guild_id === interaction.guild.id);
+          // Get all forms in the current guild
+          const guildForms = Array.from(formChannels.values())
+            .filter(config => config.guild_id === interaction.guild.id);
             
-            if (guildForms.length === 0) {
-              await interaction.editReply({
-                embeds: [
-                  new EmbedBuilder()
-                    .setDescription('ℹ️ No forms are being tracked in this server')
-                    .setColor(0xFFFF00)
-                ]
-              });
-              return;
-            }
-            
+          if (guildForms.length === 0) {
             await interaction.editReply({
               embeds: [
                 new EmbedBuilder()
-                  .setDescription('✅ Successfully checked for updates on all tracked forms')
-                  .setColor(0x00FF00)
-                  .addFields(
-                    guildForms.map(form => ({
-                      name: form.sheet_name,
-                      value: `Posting to: <#${form.channelId}>`,
-                      inline: true
-                    }))
-                  )
+                  .setDescription('ℹ️ No forms are being tracked in this server')
+                  .setColor(0xFFFF00)
               ]
             });
-          } catch (error) {
+            return;
+          }
+            
+          await interaction.editReply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('✅ Successfully checked for updates on all tracked forms')
+                .setColor(0x00FF00)
+                .addFields(
+                  guildForms.map(form => ({
+                    name: form.sheet_name,
+                    value: `Posting to: <#${form.channelId}>`,
+                    inline: true
+                  }))
+                )
+            ]
+          });
+
+        } catch (error) {
             console.error('Checkupdates error:', error);
             await interaction.editReply({
               embeds: [
