@@ -55,6 +55,7 @@ mongoClient.on('error', (err) => {
 
 let db, formChannelsCollection, lastRowsCollection;
 let formChannels = new Map();
+let permissionsCollection;
 let interactionState = {};
 
 function clearUserState(userId) {
@@ -64,7 +65,7 @@ function clearUserState(userId) {
   delete interactionState[userId];
 }
 
-// Initialize database - UPDATED
+// Initialize database 
 async function initializeDatabase() {
   try {
     await mongoClient.connect();
@@ -72,7 +73,8 @@ async function initializeDatabase() {
     
     formChannelsCollection = db.collection('form_channels');
     lastRowsCollection = db.collection('last_rows');
-    
+    permissionsCollection = db.collection('permissions'); 
+
     const docs = await formChannelsCollection.find().toArray();
     formChannels = new Map();
     
@@ -94,6 +96,18 @@ async function initializeDatabase() {
     console.error('❌ Database initialization failed:', error);
     process.exit(1);
   }
+}
+
+// function to check permissions
+async function hasPermission(userId, guildId, permission) {
+  // Check if user has the specific permission
+  const permissionDoc = await permissionsCollection.findOne({
+    user_id: userId,
+    guild_id: guildId,
+    permission: permission
+  });
+  
+  return !!permissionDoc;
 }
 
 // Google auth
