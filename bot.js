@@ -503,25 +503,28 @@ client.on('interactionCreate', async interaction => {
         const text = interaction.options.getString('text');
   
         try {
-          // Send RAW TEXT to target user (no embed)
-          await user.send(rawText)
-
-          // Keep embed for bot's confirmation
+          await user.send({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle(`📨 From ${interaction.user.tag}`)
+                .setDescription(text)
+                .setColor(0x00FF00)
+            ]
+          });
           await interaction.reply({
             embeds: [
               new EmbedBuilder()
-                .setDescription(`✅ Raw DM sent to ${user.tag}`)
+                .setDescription(`✅ DM sent to ${user.tag}`)
                 .setColor(0x00FF00)
             ],
             ephemeral: true
           });
         } catch (error) {
-          // Keep embed for error message
           await interaction.reply({
             embeds: [
-               new EmbedBuilder()
-                .setDescription(`❌ Failed to DM ${user.tag} (they may have DMs disabled)`)
-                .setColor(0xFF0000)
+              new EmbedBuilder()
+                  .setDescription(`❌ Failed to DM ${user.tag} (they may have DMs disabled)`)
+                  .setColor(0xFF0000)
             ],
             ephemeral: true
           });
