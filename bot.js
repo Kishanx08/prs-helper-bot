@@ -20,20 +20,7 @@ const limiter = new RateLimiter({ tokensPerInterval: 50, interval: 'minute' });
 const commands = [
   { 
     name: 'addform', 
-    description: 'Start tracking a Google Form', 
-    options: [
-      {
-        name: 'type',
-        description: 'Type of form to track',
-        type: 3, //string type
-        required: true,
-        choices: [
-          { name: 'Google Form', value: 'google'},
-          { name: 'Typeform', value: 'typeform' },
-          { name: 'Other', value: 'other' }
-        ]
-      }
-    ]
+    description: 'Start tracking a Google Form' 
   },
   { 
     name: 'removeform', 
@@ -411,26 +398,7 @@ client.on('interactionCreate', async interaction => {
     console.error('Invalid interaction received');
     return;
   }
-  
   try {
-    // Handle select menus first
-    if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === 'spreadsheet_select') {
-        await handleSpreadsheetSelect(interaction);
-      }
-      return;
-    }
-    
-    if (interaction.isChannelSelectMenu()) {
-      if (interaction.customId === 'channel_select') {
-        await handleChannelSelect(interaction);
-      }
-      return;
-    }
-
-    // Handle regular commands
-    if (!interaction.isCommand()) return;
-
     switch (interaction.commandName) {
       case 'addform':
       case 'removeform':
@@ -449,21 +417,7 @@ client.on('interactionCreate', async interaction => {
 
         // Now handle each specific command
         if (interaction.commandName === 'addform') {
-          const formType = interaction.options.getString('type');
-          
-          if (formType === 'google') {
-            await handleGoogleFormSetup(interaction);
-          } else {
-            await interaction.reply({
-              embeds: [
-                new EmbedBuilder()
-                  .setDescription(`✅ Selected ${formType} form tracking`)
-                  .setColor(0x00FF00)
-                  .setFooter({ text: 'Only Google Forms are currently supported' })
-              ],
-              ephemeral: true
-            });
-          }
+          await handleAddForm(interaction);
           break;
         }
         
@@ -711,7 +665,9 @@ client.on('interactionCreate', async interaction => {
             });
             break;
 
-      default:
+          
+  
+        default:
           await interaction.reply({
             embeds: [
               new EmbedBuilder()
@@ -720,182 +676,21 @@ client.on('interactionCreate', async interaction => {
             ],
             ephemeral: true
           });
+      }
+    } catch (error) {
+      console.error('❌ Interaction error:', error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription('⚠️ An error occurred')
+              .setColor(0xFF0000)
+          ],
+          ephemeral: true
+        });
+      }
     }
-  } catch (error) {
-    console.error('❌ Interaction error:', error);
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setDescription('⚠️ An error occurred')
-            .setColor(0xFF0000)
-        ],
-        ephemeral: true
-      });
-    }
-  }
-});
-
-// Helper functions for the new interactive flow
-async function handleGoogleFormSetup(interaction) {
-  try {
-    clearUserState(interaction.user.id);
-
-    const auth = await getAuthClient();
-    const drive = google.drive({ version: 'v3', auth });
-    
-    const { data } = await drive.files.list({
-      q: "mimeType='application/vnd.google-apps.spreadsheet'",
-      fields: 'files(id, name)',
-    });
-
-    if (!data.files || data.files.length === 0) {
-      return interaction.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setDescription('❌ No Google Sheets found in your account')
-            .setColor(0xFF0000)
-        ],
-        ephemeral: true
-      });
-    }
-
-// Create a select menu with the spreadsheets
-const selectMenu = new StringSelectMenuBuilder()
-.setCustomId('spreadsheet_select')
-.setPlaceholder('Select a spreadsheet to track')
-.addOptions(
-  data.files.map(file => 
-    new StringSelectMenuOptionBuilder()
-      .setLabel(file.name.length > 90 ? file.name.substring(0, 87) + '...' : file.name)
-      .setValue(`${file.id}|${file.name}`)
-  )
-);
-
-const row = new ActionRowBuilder().addComponents(selectMenu);
-
-await interaction.reply({
-content: 'Please select a spreadsheet to track:',
-components: [row],
-ephemeral: true
-});
-
-// Store state for the interaction
-interactionState[interaction.user.id] = {
-  interaction: interaction,
-  timeout: setTimeout(() => {
-    clearUserState(interaction.user.id);
-    interaction.followUp({
-      content: '⌛ Timed out! Use `/addform` again to restart',
-      ephemeral: true
-    });
-  }, 60000)
-};
-
-} catch (error) {
-console.error('Google Form setup error:', error);
-clearUserState(interaction.user.id);
-await interaction.reply({
-  embeds: [
-    new EmbedBuilder()
-      .setDescription('⚠️ Failed to fetch spreadsheets')
-      .setColor(0xFF0000)
-  ],
-  ephemeral: true
-});
-}
-}
-
-async function handleSpreadsheetSelect(interaction) {
-const userId = interaction.user.id;
-const state = interactionState[userId];
-if (!state) return;
-
-try {
-clearTimeout(state.timeout);
-
-const [spreadsheetId, spreadsheetName] = interaction.values[0].split('|');
-
-// Ask for channel selection
-const channelSelect = new ChannelSelectMenuBuilder()
-  .setCustomId('channel_select')
-  .setPlaceholder('Select a channel to post responses')
-  .addChannelTypes(ChannelType.GuildText);
-
-const row = new ActionRowBuilder().addComponents(channelSelect);
-
-await interaction.update({
-  content: `Selected: **${spreadsheetName}**\nNow select a channel for responses:`,
-  components: [row],
-  ephemeral: true
-});
-
-// Update state
-state.spreadsheetId = spreadsheetId;
-state.spreadsheetName = spreadsheetName;
-state.timeout = setTimeout(() => {
-  clearUserState(userId);
-  interaction.followUp({
-    content: '⌛ Channel selection timed out! Use `/addform` to restart',
-    ephemeral: true
   });
-}, 60000);
-
-} catch (error) {
-console.error('Select menu error:', error);
-clearUserState(userId);
-await interaction.update({
-  content: '❌ An error occurred. Please try again.',
-  components: [],
-  ephemeral: true
-});
-}
-}
-
-async function handleChannelSelect(interaction) {
-const userId = interaction.user.id;
-const state = interactionState[userId];
-if (!state) return;
-
-try {
-clearTimeout(state.timeout);
-
-const channelId = interaction.values[0];
-const channel = interaction.guild.channels.cache.get(channelId);
-
-// Save to database
-formChannels.set(`${interaction.guild.id}:${state.spreadsheetId}`, {
-  channelId,
-  sheet_name: state.spreadsheetName,
-  guild_id: interaction.guild.id,
-  spreadsheet_id: state.spreadsheetId
-});
-
-await formChannelsCollection.insertOne({
-  sheet_name: state.spreadsheetName,
-  channel_id: channelId,
-  spreadsheet_id: state.spreadsheetId,
-  guild_id: interaction.guild.id
-});
-
-await interaction.update({
-  content: `✅ Success! Now tracking **${state.spreadsheetName}** in ${channel.toString()}`,
-  components: [],
-  ephemeral: true
-});
-
-clearUserState(userId);
-
-} catch (error) {
-console.error('Channel selection error:', error);
-clearUserState(userId);
-await interaction.update({
-  content: '❌ Failed to save your selection. Please try again.',
-  components: [],
-  ephemeral: true
-});
-}
-}
 
 // Form setup flow
 async function handleAddForm(interaction) {
