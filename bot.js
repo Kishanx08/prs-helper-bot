@@ -470,7 +470,8 @@ client.on('interactionCreate', async interaction => {
               .setTitle('📋 Tracked Forms')
               .setDescription(list)
               .setColor(0x00FF00)
-          ]
+          ],
+          ephemeral: true  // This makes the message only visible to the command user
         });
         break;
 
