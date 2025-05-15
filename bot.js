@@ -150,10 +150,11 @@ REQUIRED_ENV.forEach(variable => {
 // Initialize Discord client
 const client = new Client({
   intents: [
-    GatewayIntentBits.Guilds, 
-    GatewayIntentBits.GuildMessages, 
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.DirectMessages
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.GuildMembers
   ]
 });
 
@@ -404,18 +405,30 @@ async function pollSheets() {
 // Discord bot setup
 client.once('ready', async () => {
   console.log(`🤖 Logged in as ${client.user.tag}`);
-  await initializeDatabase();
+  console.log('Intents:', client.options.intents);
   
-  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
-    await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-    console.log('✅ Slash commands registered');
+    await initializeDatabase();
+    console.log('✅ Database collections initialized:');
+    console.log('- formChannelsCollection');
+    console.log('- lastRowsCollection');
+    console.log('- permissionsCollection');
+    console.log('- ticketSettingsCollection');
+    console.log('- activeTicketsCollection');
+    
+    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+    try {
+      await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+      console.log('✅ Slash commands registered');
+    } catch (error) {
+      console.error('❌ Failed to register commands:', error);
+    }
+    
+    setInterval(pollSheets, 900000);
+    console.log('✅ Bot operational');
   } catch (error) {
-    console.error('❌ Failed to register commands:', error);
+    console.error('❌ Startup error:', error);
   }
-  
-  setInterval(pollSheets, 900000);
-  console.log('✅ Bot operational');
 });
 
 // Slash command handlers
@@ -1053,6 +1066,12 @@ client.on('messageCreate', async message => {
 
 // Message handling for tickets and ticket channels
 client.on('messageCreate', async message => {
+  console.log('Message received:', {
+    channelType: message.channel.type,
+    isDM: message.channel.type === 1,
+    content: message.content
+  });
+  
   if (message.author.bot) return;
 
   // Handle messages in ticket channels
@@ -1086,118 +1105,140 @@ client.on('messageCreate', async message => {
   }
 
   // Handle DMs
-  if (message.channel.type !== 1) return;
-
-  // Check for active ticket
-  const activeTicket = await activeTicketsCollection.findOne({ 
-    user_id: message.author.id,
-    status: 'open'
-  });
-  // Find a guild where the user and bot are both members
-  const guild = client.guilds.cache.find(g => g.members.cache.has(message.author.id));
-  if (!guild) {
-    return message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setDescription("❌ Could not find a server where we can create your ticket! Please make sure we share at least one server.")
-          .setColor(0xFF0000)
-      ]
+  if (message.channel.type === 1) {
+    console.log('Processing DM from:', message.author.tag);
+    
+    // Check for active ticket
+    const activeTicket = await activeTicketsCollection.findOne({ 
+      user_id: message.author.id,
+      status: 'open'
     });
-  }
-  
-  if (activeTicket) {
-    // Forward message to existing ticket
-    const ticketChannel = guild.channels.cache.get(activeTicket.channel_id);
-    if (ticketChannel) {
-      await ticketChannel.send({
+
+    console.log('Active ticket check:', activeTicket ? 'Found active ticket' : 'No active ticket');
+    
+    // Find a guild where the user and bot are both members
+    const guild = client.guilds.cache.find(g => {
+      const hasBoth = g.members.cache.has(message.author.id);
+      console.log(`Checking guild ${g.name}:`, hasBoth ? 'Both members present' : 'Not both members');
+      return hasBoth;
+    });
+
+    if (!guild) {
+      console.log('No suitable guild found for user:', message.author.tag);
+      return message.reply({
         embeds: [
           new EmbedBuilder()
-            .setAuthor({
-              name: message.author.tag,
-              iconURL: message.author.displayAvatarURL()
-            })
-            .setDescription(message.content)
+            .setDescription("❌ Could not find a server where we can create your ticket! Please make sure we share at least one server.")
+            .setColor(0xFF0000)
+        ]
+      });
+    }
+
+    console.log('Found suitable guild:', guild.name);
+
+    if (activeTicket) {
+      // Forward message to existing ticket
+      const ticketChannel = guild.channels.cache.get(activeTicket.channel_id);
+      if (ticketChannel) {
+        await ticketChannel.send({
+          embeds: [
+            new EmbedBuilder()
+              .setAuthor({
+                name: message.author.tag,
+                iconURL: message.author.displayAvatarURL()
+              })
+              .setDescription(message.content)
+              .setColor(0x00FF00)
+              .setTimestamp()
+          ]
+        });
+      }
+      return;
+    }
+
+    // Get ticket category
+    const settings = await ticketSettingsCollection.findOne({ guild_id: guild.id });
+    console.log('Ticket settings:', settings ? 'Found settings' : 'No settings found');
+    
+    if (!settings?.ticket_category) {
+      return message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setDescription("❌ The ticket system hasn't been set up yet! An admin needs to use /setticketcategory first.")
+            .setColor(0xFF0000)
+        ]
+      });
+    }
+
+    try {    // Create ticket channel
+      console.log('Creating ticket channel in category:', settings.ticket_category);
+      
+      const channel = await guild.channels.create({
+        name: `ticket-${message.author.username}`,
+        type: 0, // Text channel
+        parent: settings.ticket_category,
+        permissionOverwrites: [
+          {
+            id: guild.roles.everyone,
+            deny: ['ViewChannel']
+          },
+          {
+            id: message.author.id,
+            allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory']
+          },
+          {
+            id: client.user.id,
+            allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels']
+          }
+        ]
+      });
+
+      console.log('Successfully created ticket channel:', channel.name);
+
+      // Save ticket in database
+      await activeTicketsCollection.insertOne({
+        channel_id: channel.id,
+        user_id: message.author.id,
+        guild_id: guild.id,
+        status: 'open',
+        created_at: new Date()
+      });
+
+      // Send initial message to ticket channel
+      await channel.send({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('🎟️ New Ticket')
+            .setDescription(`Ticket created by ${message.author.tag}`)
+            .addFields(
+              { name: 'User', value: `<@${message.author.id}>` },
+              { name: 'Initial Message', value: message.content }
+            )
             .setColor(0x00FF00)
             .setTimestamp()
         ]
       });
+
+      // Notify user
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('🎟️ Ticket Created')
+            .setDescription('Your ticket has been created! Staff will respond shortly.')
+            .setColor(0x00FF00)
+        ]
+      });
+
+    } catch (error) {
+      console.error('Error creating ticket:', error);
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setDescription('❌ Failed to create ticket. Please try again later.')
+            .setColor(0xFF0000)
+        ]
+      });
     }
-    return;
-  }
-
-  // Get ticket category
-  const settings = await ticketSettingsCollection.findOne({ guild_id: guild.id });
-  if (!settings?.ticket_category) {
-    return message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setDescription("❌ The ticket system hasn't been set up yet!")
-          .setColor(0xFF0000)
-      ]
-    });
-  }
-
-  try {
-    // Create ticket channel
-    const channel = await guild.channels.create({
-      name: `ticket-${message.author.username}`,
-      type: 0, // Text channel
-      parent: settings.ticket_category,
-      permissionOverwrites: [
-        {
-          id: guild.roles.everyone,
-          deny: ['ViewChannel']
-        },
-        {
-          id: message.author.id,
-          allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory']
-        }
-      ]
-    });
-
-    // Save ticket in database
-    await activeTicketsCollection.insertOne({
-      channel_id: channel.id,
-      user_id: message.author.id,
-      guild_id: guild.id,
-      status: 'open',
-      created_at: new Date()
-    });
-
-    // Send initial message to ticket channel
-    await channel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle('🎟️ New Ticket')
-          .setDescription(`Ticket created by ${message.author.tag}`)
-          .addFields(
-            { name: 'User', value: `<@${message.author.id}>` },
-            { name: 'Initial Message', value: message.content }
-          )
-          .setColor(0x00FF00)
-          .setTimestamp()
-      ]
-    });
-
-    // Notify user
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle('🎟️ Ticket Created')
-          .setDescription('Your ticket has been created! Staff will respond shortly.')
-          .setColor(0x00FF00)
-      ]
-    });
-
-  } catch (error) {
-    console.error('Error creating ticket:', error);
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setDescription('❌ Failed to create ticket. Please try again later.')
-          .setColor(0xFF0000)
-      ]
-    });
   }
 });
 
