@@ -120,6 +120,24 @@ const commands = [
         required: false 
       }
     ]
+  },
+  {
+    name: 'setticketcategory',
+    description: 'Set the category where tickets will be created',
+    options: [{
+      name: 'category',
+      description: 'The category ID where tickets will be created',
+      type: 3, // STRING type
+      required: true
+    }]
+  },
+  {
+    name: 'closeticket',
+    description: 'Close the current ticket channel',
+  },
+  {
+    name: 'deleteticket',
+    description: 'Delete the current ticket channel'
   }
 ];
 
@@ -131,7 +149,12 @@ REQUIRED_ENV.forEach(variable => {
 
 // Initialize Discord client
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+  intents: [
+    GatewayIntentBits.Guilds, 
+    GatewayIntentBits.GuildMessages, 
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.DirectMessages
+  ]
 });
 
 // Google Sheets setup
@@ -153,6 +176,8 @@ mongoClient.on('error', (err) => {
 let db, formChannelsCollection, lastRowsCollection;
 let formChannels = new Map();
 let permissionsCollection;
+let ticketSettingsCollection;
+let activeTicketsCollection;
 let interactionState = {};
 
 function clearUserState(userId) {
@@ -167,10 +192,11 @@ async function initializeDatabase() {
   try {
     await mongoClient.connect();
     db = mongoClient.db('prs-helper');
-    
-    formChannelsCollection = db.collection('form_channels');
+      formChannelsCollection = db.collection('form_channels');
     lastRowsCollection = db.collection('last_rows');
-    permissionsCollection = db.collection('permissions'); 
+    permissionsCollection = db.collection('permissions');
+    ticketSettingsCollection = db.collection('ticket_settings');
+    activeTicketsCollection = db.collection('active_tickets');
 
     const docs = await formChannelsCollection.find().toArray();
     formChannels = new Map();
@@ -664,10 +690,162 @@ client.on('interactionCreate', async interaction => {
               ],
               ephemeral: true
             });
-            break;
+            break;      case 'setticketcategory':
+        const categoryId = interaction.options.getString('category');
+        await ticketSettingsCollection.updateOne(
+          { guild_id: interaction.guild.id },
+          { $set: { ticket_category: categoryId } },
+          { upsert: true }
+        );
+        
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle('🎟️ Ticket System')
+              .setDescription('Ticket category has been set!')
+              .addFields({ name: 'Category', value: `<#${categoryId}>` })
+              .setColor(0x00FF00)
+          ],
+          ephemeral: true
+        });
+        break;      case 'closeticket':
+        if (!interaction.channel.name.startsWith('ticket-')) {
+          return interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ This is not a ticket channel')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
+          });
+        }
 
-          
-  
+        const ticketData = await activeTicketsCollection.findOne({ 
+          channel_id: interaction.channel.id,
+          status: 'open'
+        });
+
+        if (!ticketData) {
+          return interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ Could not find ticket data')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
+          });
+        }
+
+        try {
+          // Update ticket status
+          await activeTicketsCollection.updateOne(
+            { channel_id: interaction.channel.id },
+            { $set: { status: 'closed' } }
+          );
+
+          // Notify user
+          const user = await client.users.fetch(ticketData.user_id);
+          await user.send({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle('🎟️ Ticket Closed')
+                .setDescription('Your ticket has been closed by staff.')
+                .setColor(0xFFA500)
+                .setTimestamp()
+            ]
+          }).catch(() => console.log('Could not DM user about ticket closure'));
+
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('✅ Ticket closed')
+                .setColor(0x00FF00)
+            ]
+          });
+
+          // Delete channel after 5 seconds
+          setTimeout(() => interaction.channel.delete(), 5000);
+
+        } catch (error) {
+          console.error('Error closing ticket:', error);
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ Failed to close ticket')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
+          });
+        }
+        break;      case 'deleteticket':
+        if (!interaction.channel.name.startsWith('ticket-')) {
+          return interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ This is not a ticket channel')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
+          });
+        }
+
+        const ticketToDelete = await activeTicketsCollection.findOne({
+          channel_id: interaction.channel.id
+        });
+
+        if (!ticketToDelete) {
+          return interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ Could not find ticket data')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
+          });
+        }
+
+        try {
+          // Notify user before deleting
+          const user = await client.users.fetch(ticketToDelete.user_id);
+          await user.send({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle('🎟️ Ticket Deleted')
+                .setDescription('Your ticket has been deleted by staff.')
+                .setColor(0xFF0000)
+                .setTimestamp()
+            ]
+          }).catch(() => console.log('Could not DM user about ticket deletion'));
+
+          // Delete from database
+          await activeTicketsCollection.deleteOne({
+            channel_id: interaction.channel.id
+          });
+
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('✅ Ticket deleted')
+                .setColor(0x00FF00)
+            ]
+          });
+
+          // Delete the channel after a short delay
+          setTimeout(() => interaction.channel.delete(), 2000);
+
+        } catch (error) {
+          console.error('Error deleting ticket:', error);
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ Failed to delete ticket')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
+          });
+        }
+        break;
+
         default:
           await interaction.reply({
             embeds: [
@@ -821,6 +999,116 @@ client.on('messageCreate', async message => {
       embeds: [
         new EmbedBuilder()
           .setDescription(`❌ ${error.message}. Use \`/addform\` to restart`)
+          .setColor(0xFF0000)
+      ]
+    });
+  }
+});
+
+// Message handling for tickets
+client.on('messageCreate', async message => {
+  // Only handle DMs from users (not bots)
+  if (message.channel.type !== 1 || message.author.bot) return;
+
+  // Check for active ticket
+  const activeTicket = await activeTicketsCollection.findOne({ 
+    user_id: message.author.id,
+    status: 'open'
+  });
+
+  // Get main guild (you might want to modify this for multi-guild setup)
+  const guild = client.guilds.cache.first();
+  
+  if (activeTicket) {
+    // Forward message to existing ticket
+    const ticketChannel = guild.channels.cache.get(activeTicket.channel_id);
+    if (ticketChannel) {
+      await ticketChannel.send({
+        embeds: [
+          new EmbedBuilder()
+            .setAuthor({
+              name: message.author.tag,
+              iconURL: message.author.displayAvatarURL()
+            })
+            .setDescription(message.content)
+            .setColor(0x00FF00)
+            .setTimestamp()
+        ]
+      });
+    }
+    return;
+  }
+
+  // Get ticket category
+  const settings = await ticketSettingsCollection.findOne({ guild_id: guild.id });
+  if (!settings?.ticket_category) {
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setDescription("❌ The ticket system hasn't been set up yet!")
+          .setColor(0xFF0000)
+      ]
+    });
+  }
+
+  try {
+    // Create ticket channel
+    const channel = await guild.channels.create({
+      name: `ticket-${message.author.username}`,
+      type: 0, // Text channel
+      parent: settings.ticket_category,
+      permissionOverwrites: [
+        {
+          id: guild.roles.everyone,
+          deny: ['ViewChannel']
+        },
+        {
+          id: message.author.id,
+          allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory']
+        }
+      ]
+    });
+
+    // Save ticket in database
+    await activeTicketsCollection.insertOne({
+      channel_id: channel.id,
+      user_id: message.author.id,
+      guild_id: guild.id,
+      status: 'open',
+      created_at: new Date()
+    });
+
+    // Send initial message to ticket channel
+    await channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('🎟️ New Ticket')
+          .setDescription(`Ticket created by ${message.author.tag}`)
+          .addFields(
+            { name: 'User', value: `<@${message.author.id}>` },
+            { name: 'Initial Message', value: message.content }
+          )
+          .setColor(0x00FF00)
+          .setTimestamp()
+      ]
+    });
+
+    // Notify user
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('🎟️ Ticket Created')
+          .setDescription('Your ticket has been created! Staff will respond shortly.')
+          .setColor(0x00FF00)
+      ]
+    });
+
+  } catch (error) {
+    console.error('Error creating ticket:', error);
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setDescription('❌ Failed to create ticket. Please try again later.')
           .setColor(0xFF0000)
       ]
     });
