@@ -691,6 +691,18 @@ client.on('interactionCreate', async interaction => {
               ephemeral: true
             });
             break;      case 'setticketcategory':
+        // Check for administrator permissions
+        if (!interaction.member.permissions.has('Administrator')) {
+          return interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ You need Administrator permission to use this command')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
+          });
+        }
+        
         const categoryId = interaction.options.getString('category');
         await ticketSettingsCollection.updateOne(
           { guild_id: interaction.guild.id },
@@ -709,35 +721,50 @@ client.on('interactionCreate', async interaction => {
           ephemeral: true
         });
         break;      case 'closeticket':
-        if (!interaction.channel.name.startsWith('ticket-')) {
-          return interaction.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setDescription('❌ This is not a ticket channel')
-                .setColor(0xFF0000)
-            ],
-            ephemeral: true
-          });
-        }
-
-        const ticketData = await activeTicketsCollection.findOne({ 
-          channel_id: interaction.channel.id,
-          status: 'open'
-        });
-
-        if (!ticketData) {
-          return interaction.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setDescription('❌ Could not find ticket data')
-                .setColor(0xFF0000)
-            ],
-            ephemeral: true
-          });
-        }
-
         try {
-          // Update ticket status
+          // Check for staff role or administrator permission
+          if (!interaction.member.permissions.has('Administrator') && !interaction.member.permissions.has('ManageChannels')) {
+            return interaction.reply({
+              embeds: [
+                new EmbedBuilder()
+                  .setDescription('❌ You need staff permissions to close tickets')
+                  .setColor(0xFF0000)
+              ],
+              ephemeral: true
+            });
+          }
+
+          if (!interaction.channel.name.startsWith('ticket-')) {
+            return interaction.reply({
+              embeds: [
+                new EmbedBuilder()
+                  .setDescription('❌ This is not a ticket channel')
+                  .setColor(0xFF0000)
+              ],
+              ephemeral: true
+            });
+          }
+
+          const ticketData = await activeTicketsCollection.findOne({ 
+            channel_id: interaction.channel.id,
+            status: 'open'
+          });
+
+          if (!ticketData) {
+            return interaction.reply({
+              embeds: [
+                new EmbedBuilder()
+                  .setDescription('❌ Could not find ticket data')
+                  .setColor(0xFF0000)
+              ],
+              ephemeral: true
+            });
+          }
+
+          // Acknowledge the interaction first
+          await interaction.deferReply();
+
+          // Update ticket status first
           await activeTicketsCollection.updateOne(
             { channel_id: interaction.channel.id },
             { $set: { status: 'closed' } }
@@ -755,29 +782,48 @@ client.on('interactionCreate', async interaction => {
             ]
           }).catch(() => console.log('Could not DM user about ticket closure'));
 
-          await interaction.reply({
+          // Edit the initial reply
+          await interaction.editReply({
             embeds: [
               new EmbedBuilder()
-                .setDescription('✅ Ticket closed')
+                .setDescription('✅ Ticket closed - Channel will be deleted in 5 seconds')
                 .setColor(0x00FF00)
             ]
           });
 
           // Delete channel after 5 seconds
-          setTimeout(() => interaction.channel.delete(), 5000);
+          setTimeout(() => interaction.channel.delete().catch(console.error), 5000);
 
         } catch (error) {
           console.error('Error closing ticket:', error);
-          await interaction.reply({
+          const errorMessage = {
             embeds: [
               new EmbedBuilder()
                 .setDescription('❌ Failed to close ticket')
                 .setColor(0xFF0000)
             ],
             ephemeral: true
+          };
+          
+          if (interaction.deferred) {
+            await interaction.editReply(errorMessage);
+          } else {
+            await interaction.reply(errorMessage);
+          }
+        }
+        break;case 'deleteticket':
+        // Check for staff role or administrator permission
+        if (!interaction.member.permissions.has('Administrator') && !interaction.member.permissions.has('ManageChannels')) {
+          return interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ You need staff permissions to delete tickets')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
           });
         }
-        break;      case 'deleteticket':
+        
         if (!interaction.channel.name.startsWith('ticket-')) {
           return interaction.reply({
             embeds: [
@@ -1005,19 +1051,59 @@ client.on('messageCreate', async message => {
   }
 });
 
-// Message handling for tickets
+// Message handling for tickets and ticket channels
 client.on('messageCreate', async message => {
-  // Only handle DMs from users (not bots)
-  if (message.channel.type !== 1 || message.author.bot) return;
+  if (message.author.bot) return;
+
+  // Handle messages in ticket channels
+  if (message.channel.name?.startsWith('ticket-')) {
+    const ticketData = await activeTicketsCollection.findOne({ 
+      channel_id: message.channel.id,
+      status: 'open'
+    });
+
+    if (ticketData) {
+      // Forward message to ticket user
+      try {
+        const user = await client.users.fetch(ticketData.user_id);
+        await user.send({
+          embeds: [
+            new EmbedBuilder()
+              .setAuthor({
+                name: message.author.tag,
+                iconURL: message.author.displayAvatarURL()
+              })
+              .setDescription(message.content)
+              .setColor(0x00FF00)
+              .setTimestamp()
+          ]
+        });
+      } catch (error) {
+        console.error('Could not forward message to user:', error);
+      }
+    }
+    return;
+  }
+
+  // Handle DMs
+  if (message.channel.type !== 1) return;
 
   // Check for active ticket
   const activeTicket = await activeTicketsCollection.findOne({ 
     user_id: message.author.id,
     status: 'open'
   });
-
-  // Get main guild (you might want to modify this for multi-guild setup)
-  const guild = client.guilds.cache.first();
+  // Find a guild where the user and bot are both members
+  const guild = client.guilds.cache.find(g => g.members.cache.has(message.author.id));
+  if (!guild) {
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setDescription("❌ Could not find a server where we can create your ticket! Please make sure we share at least one server.")
+          .setColor(0xFF0000)
+      ]
+    });
+  }
   
   if (activeTicket) {
     // Forward message to existing ticket
