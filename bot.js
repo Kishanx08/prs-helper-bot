@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, REST, Routes } = require('discord.js');
 const { google } = require('googleapis');
 const { MongoClient } = require('mongodb');
 const express = require('express');
@@ -154,7 +154,20 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
-    GatewayIntentBits.GuildMembers
+    GatewayIntentBits.DirectMessageTyping,
+    GatewayIntentBits.DirectMessageReactions,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildPresences,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.GuildModeration,
+    GatewayIntentBits.GuildIntegrations
+  ],
+  partials: [
+    Partials.Channel,
+    Partials.Message,
+    Partials.User,
+    Partials.GuildMember,
+    Partials.Reaction
   ]
 });
 
@@ -1066,11 +1079,16 @@ client.on('messageCreate', async message => {
 
 // Message handling for tickets and ticket channels
 client.on('messageCreate', async message => {
-  console.log('Message received:', {
-    channelType: message.channel.type,
-    isDM: message.channel.type === 1,
-    content: message.content
-  });
+  // Enhanced logging for debugging
+  const channelInfo = {
+    type: message.channel.type,
+    isDM: message.channel.isDMBased?.() || message.channel.type === 1 || message.channel.type === 'DM',
+    guildId: message.guild?.id || 'DM',
+    channelId: message.channel.id,
+    author: message.author.tag,
+    content: message.content?.substring(0, 100) // Log first 100 chars of content
+  };
+  console.log('Message received:', channelInfo);
   
   if (message.author.bot) return;
 
@@ -1104,8 +1122,8 @@ client.on('messageCreate', async message => {
     return;
   }
 
-  // Handle DMs
-  if (message.channel.type === 1) {
+  // Handle DMs - updated check for DM channels
+  if (channelInfo.isDM) {
     console.log('Processing DM from:', message.author.tag);
     
     // Check for active ticket
@@ -1170,16 +1188,19 @@ client.on('messageCreate', async message => {
       });
     }
 
-    try {    // Create ticket channel
+    try {
+      // Create ticket channel
       console.log('Creating ticket channel in category:', settings.ticket_category);
       
+      const channelName = `ticket-${message.author.username.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
       const channel = await guild.channels.create({
-        name: `ticket-${message.author.username}`,
-        type: 0, // Text channel
+        name: channelName,
+        type: 0,
         parent: settings.ticket_category,
+        topic: `Support ticket for ${message.author.tag}`,
         permissionOverwrites: [
           {
-            id: guild.roles.everyone,
+            id: guild.roles.everyone.id,
             deny: ['ViewChannel']
           },
           {
@@ -1189,8 +1210,13 @@ client.on('messageCreate', async message => {
           {
             id: client.user.id,
             allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels']
+          },
+          {
+            id: guild.id,
+            allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels']
           }
-        ]
+        ],
+        reason: 'Ticket created via DM'
       });
 
       console.log('Successfully created ticket channel:', channel.name);
