@@ -4,6 +4,7 @@ const { google } = require('googleapis');
 const { MongoClient } = require('mongodb');
 const express = require('express');
 const { RateLimiter } = require('limiter');
+const fetch = require('node-fetch');
 
 // Error handling
 process.on('unhandledRejection', (error) => {
@@ -59,6 +60,10 @@ const commands = [
         required: true 
       }
     ] 
+  },
+  {
+    name: 'cats',
+    description: 'Shows random cat pictures'
   },
   { 
     name: 'checkupdates', 
@@ -536,6 +541,33 @@ client.on('interactionCreate', async interaction => {
               .setColor(0x00FF00)
           ]
         });
+        break;
+
+      case 'cats':
+        try {
+          const response = await fetch('https://api.thecatapi.com/v1/images/search');
+          const [data] = await response.json();
+          
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle('🐱 Random Cat')
+                .setImage(data.url)
+                .setColor(0x00FF00)
+                .setFooter({ text: 'Powered by TheCatAPI' })
+            ]
+          });
+        } catch (error) {
+          console.error('Cat API error:', error);
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ Failed to fetch cat image')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
+          });
+        }
         break;
 
       case 'dm':
