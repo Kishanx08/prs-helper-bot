@@ -143,6 +143,22 @@ const commands = [
   {
     name: 'deleteticket',
     description: 'Delete the current ticket channel'
+  },
+  {
+    name: 'maintenancelb',
+    description: 'Put the site in maintenance mode for a specified duration',
+    options: [
+      {
+        name: 'time',
+        description: 'Duration in minutes (e.g. 30 for 30 minutes)',
+        type: 4, // INTEGER type
+        required: true
+      }
+    ]
+  },
+  {
+    name: 'forcemaintenanceoff',
+    description: 'Force turn off maintenance mode'
   }
 ];
 
@@ -950,6 +966,13 @@ client.on('interactionCreate', async interaction => {
         }
         break;
 
+      case 'maintenancelb':
+        await handleMaintenanceLB(interaction);
+        break;
+      case 'forcemaintenanceoff':
+        await handleForceMaintenanceOff(interaction);
+        break;
+
         default:
           await interaction.reply({
             embeds: [
@@ -1315,3 +1338,65 @@ process.on('SIGINT', async () => {
 
 // Start bot
 client.login(process.env.DISCORD_TOKEN);
+
+// Add this after the other command handlers
+async function handleMaintenanceLB(interaction) {
+  if (!await hasPermission(interaction.user.id, interaction.guildId, 'manage_forms')) {
+    return interaction.reply({ content: '❌ You do not have permission to use this command.', ephemeral: true });
+  }
+
+  const duration = interaction.options.getInteger('time');
+  if (duration <= 0) {
+    return interaction.reply({ content: '❌ Please provide a valid duration in minutes.', ephemeral: true });
+  }
+
+  try {
+    const response = await fetch('https://backend-lb-m4j2.onrender.com/maintenance', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        duration: duration,
+        action: 'enable'
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to enable maintenance mode');
+    }
+
+    const endTime = new Date(Date.now() + duration * 60000);
+    await interaction.reply(`✅ Maintenance mode enabled for ${duration} minutes. Will end at ${endTime.toLocaleString()}`);
+  } catch (error) {
+    console.error('Error enabling maintenance mode:', error);
+    await interaction.reply('❌ Failed to enable maintenance mode. Please try again later.');
+  }
+}
+
+async function handleForceMaintenanceOff(interaction) {
+  if (!await hasPermission(interaction.user.id, interaction.guildId, 'manage_forms')) {
+    return interaction.reply({ content: '❌ You do not have permission to use this command.', ephemeral: true });
+  }
+
+  try {
+    const response = await fetch('https://backend-lb-m4j2.onrender.com/maintenance', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        action: 'disable'
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to disable maintenance mode');
+    }
+
+    await interaction.reply('✅ Maintenance mode has been disabled.');
+  } catch (error) {
+    console.error('Error disabling maintenance mode:', error);
+    await interaction.reply('❌ Failed to disable maintenance mode. Please try again later.');
+  }
+}
