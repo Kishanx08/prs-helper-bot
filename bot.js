@@ -215,6 +215,8 @@ let ticketSettingsCollection;
 let activeTicketsCollection;
 let interactionState = {};
 
+const OWNER_ID = '1057573344855207966';
+
 function clearUserState(userId) {
   if (interactionState[userId]?.timeout) {
     clearTimeout(interactionState[userId].timeout);
@@ -1341,8 +1343,8 @@ client.login(process.env.DISCORD_TOKEN);
 
 // Add this after the other command handlers
 async function handleMaintenanceLB(interaction) {
-  if (!await hasPermission(interaction.user.id, interaction.guildId, 'manage_forms')) {
-    return interaction.reply({ content: '❌ You do not have permission to use this command.', ephemeral: true });
+  if (interaction.user.id !== OWNER_ID) {
+    return interaction.reply({ content: '❌ Only the bot owner can use this command.', ephemeral: true });
   }
 
   const duration = interaction.options.getInteger('time');
@@ -1375,8 +1377,8 @@ async function handleMaintenanceLB(interaction) {
 }
 
 async function handleForceMaintenanceOff(interaction) {
-  if (!await hasPermission(interaction.user.id, interaction.guildId, 'manage_forms')) {
-    return interaction.reply({ content: '❌ You do not have permission to use this command.', ephemeral: true });
+  if (interaction.user.id !== OWNER_ID) {
+    return interaction.reply({ content: '❌ Only the bot owner can use this command.', ephemeral: true });
   }
 
   try {
