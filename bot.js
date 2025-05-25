@@ -1351,7 +1351,7 @@ async function handleMaintenanceLB(interaction) {
   }
 
   try {
-    const response = await fetch('https://backend-lb-m4j2.onrender.com/maintenance', {
+    const response = await fetch('https://backend-lb-82a59383ceaf.herokuapp.com/maintenance', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -1380,7 +1380,7 @@ async function handleForceMaintenanceOff(interaction) {
   }
 
   try {
-    const response = await fetch('https://backend-lb-m4j2.onrender.com/maintenance', {
+    const response = await fetch('https://backend-lb-82a59383ceaf.herokuapp.com/maintenance', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
