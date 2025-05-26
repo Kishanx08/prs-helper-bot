@@ -515,6 +515,54 @@ client.on('interactionCreate', async interaction => {
     console.error('Invalid interaction received');
     return;
   }
+
+  // Handle copy receipt button interaction
+  if (interaction.isButton() && interaction.customId.startsWith('copy_receipt_')) {
+    try {
+      // Get the receipt text from the embed
+      const embed = interaction.message.embeds[0];
+      if (!embed || !embed.description) {
+        console.error('Receipt embed not found');
+        await interaction.reply({
+          content: '❌ Failed to copy receipt: Receipt not found',
+          ephemeral: true
+        });
+        return;
+      }
+
+      // Reply with the receipt text
+      await interaction.reply({
+        content: `Here's your receipt:\n\`\`\`${embed.description}\`\`\``,
+        ephemeral: true
+      });
+
+      // Update the button to show it was copied
+      const newRow = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId(interaction.customId)
+            .setLabel('📋 Copied')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(true)
+        );
+
+      await interaction.message.edit({
+        embeds: interaction.message.embeds,
+        components: [newRow]
+      });
+
+      return;
+    } catch (error) {
+      console.error('Error handling copy receipt button:', error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: '❌ Failed to copy receipt. Please try again.',
+          ephemeral: true
+        });
+      }
+      return;
+    }
+  }
   try {
     switch (interaction.commandName) {
       case 'addform':
@@ -1176,426 +1224,4 @@ client.on('messageCreate', async message => {
     clearTimeout(state.timeout);
 
     if (state.step === 'selectSpreadsheet') {
-      const spreadsheet = state.spreadsheets.find(f => f.name === message.content.trim());
-      if (!spreadsheet) {
-        throw new Error('Invalid spreadsheet name');
-      }
-
-      state.spreadsheet = spreadsheet;
-      state.step = 'selectChannel';
-      state.timeout = setTimeout(() => {
-        clearUserState(userId);
-        message.reply({
-          embeds: [
-            new EmbedBuilder()
-              .setDescription('⌛ Channel selection timed out! Use `/addform` to restart')
-              .setColor(0xFFA500)
-          ]
-        });
-      }, 15000);
-
-      await message.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setDescription('Mention the channel to receive responses:')
-            .setFooter({ text: '⏳ Mention a channel within 15 seconds' })
-            .setColor(0x00FF00)
-        ]
-      });
-    }
-    else if (state.step === 'selectChannel') {
-      const channelId = message.mentions.channels.first()?.id;
-      if (!channelId) {
-        throw new Error('No channel mentioned');
-      }
-
-      // Store with guild ID
-  formChannels.set(`${message.guild.id}:${state.spreadsheet.id}`, {
-    channelId,
-    sheet_name: state.spreadsheet.name,
-    guild_id: message.guild.id // Add guild ID
-  });
-
-      // Save to database with guild ID
-  await formChannelsCollection.insertOne({
-    sheet_name: state.spreadsheet.name,
-    channel_id: channelId,
-    spreadsheet_id: state.spreadsheet.id,
-    guild_id: message.guild.id // Add guild ID
-  });
-
-      await message.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setDescription(`✅ Now tracking ${state.spreadsheet.name} in <#${channelId}>`)
-            .setColor(0x00FF00)
-        ]
-      });
-      clearUserState(userId);
-    }
-  } catch (error) {
-    clearUserState(userId);
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setDescription(`❌ ${error.message}. Use \`/addform\` to restart`)
-          .setColor(0xFF0000)
-      ]
-    });
-  }
-});
-
-// Message handling for tickets and ticket channels
-client.on('messageCreate', async message => {
-  // Enhanced logging for debugging
-  const channelInfo = {
-    type: message.channel.type,
-    isDM: message.channel.isDMBased?.() || message.channel.type === 1 || message.channel.type === 'DM',
-    guildId: message.guild?.id || 'DM',
-    channelId: message.channel.id,
-    author: message.author.tag,
-    content: message.content?.substring(0, 100) // Log first 100 chars of content
-  };
-  console.log('Message received:', channelInfo);
-  
-  if (message.author.bot) return;
-
-  // Handle messages in ticket channels
-  if (message.channel.name?.startsWith('ticket-')) {
-    const ticketData = await activeTicketsCollection.findOne({ 
-      channel_id: message.channel.id,
-      status: 'open'
-    });
-
-    if (ticketData) {
-      // Forward message to ticket user
-      try {
-        const user = await client.users.fetch(ticketData.user_id);
-        await user.send({
-          embeds: [
-            new EmbedBuilder()
-              .setAuthor({
-                name: message.author.tag,
-                iconURL: message.author.displayAvatarURL()
-              })
-              .setDescription(message.content)
-              .setColor(0x00FF00)
-              .setTimestamp()
-          ]
-        });
-      } catch (error) {
-        console.error('Could not forward message to user:', error);
-      }
-    }
-    return;
-  }
-
-  // Handle DMs - updated check for DM channels
-  if (channelInfo.isDM) {
-    console.log('Processing DM from:', message.author.tag);
-    
-    // Check for active ticket
-    const activeTicket = await activeTicketsCollection.findOne({ 
-      user_id: message.author.id,
-      status: 'open'
-    });
-
-    console.log('Active ticket check:', activeTicket ? 'Found active ticket' : 'No active ticket');
-    
-    // Find a guild where the user and bot are both members
-    const guild = client.guilds.cache.find(g => {
-      const hasBoth = g.members.cache.has(message.author.id);
-      console.log(`Checking guild ${g.name}:`, hasBoth ? 'Both members present' : 'Not both members');
-      return hasBoth;
-    });
-
-    if (!guild) {
-      console.log('No suitable guild found for user:', message.author.tag);
-      return message.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setDescription("❌ Could not find a server where we can create your ticket! Please make sure we share at least one server.")
-            .setColor(0xFF0000)
-        ]
-      });
-    }
-
-    console.log('Found suitable guild:', guild.name);
-
-    if (activeTicket) {
-      // Forward message to existing ticket
-      const ticketChannel = guild.channels.cache.get(activeTicket.channel_id);
-      if (ticketChannel) {
-        await ticketChannel.send({
-          embeds: [
-            new EmbedBuilder()
-              .setAuthor({
-                name: message.author.tag,
-                iconURL: message.author.displayAvatarURL()
-              })
-              .setDescription(message.content)
-              .setColor(0x00FF00)
-              .setTimestamp()
-          ]
-        });
-      }
-      return;
-    }
-
-    // Get ticket category
-    const settings = await ticketSettingsCollection.findOne({ guild_id: guild.id });
-    console.log('Ticket settings:', settings ? 'Found settings' : 'No settings found');
-    
-    if (!settings?.ticket_category) {
-      return message.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setDescription("❌ The ticket system hasn't been set up yet! An admin needs to use /setticketcategory first.")
-            .setColor(0xFF0000)
-        ]
-      });
-    }
-
-    try {
-      // Create ticket channel
-      console.log('Creating ticket channel in category:', settings.ticket_category);
-      
-      const channelName = `ticket-${message.author.username.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-      const channel = await guild.channels.create({
-        name: channelName,
-        type: 0,
-        parent: settings.ticket_category,
-        topic: `Support ticket for ${message.author.tag}`,
-        permissionOverwrites: [
-          {
-            id: guild.roles.everyone.id,
-            deny: ['ViewChannel']
-          },
-          {
-            id: message.author.id,
-            allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory']
-          },
-          {
-            id: client.user.id,
-            allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels']
-          },
-          {
-            id: guild.id,
-            allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels']
-          }
-        ],
-        reason: 'Ticket created via DM'
-      });
-
-      console.log('Successfully created ticket channel:', channel.name);
-
-      // Save ticket in database
-      await activeTicketsCollection.insertOne({
-        channel_id: channel.id,
-        user_id: message.author.id,
-        guild_id: guild.id,
-        status: 'open',
-        created_at: new Date()
-      });
-
-      // Send initial message to ticket channel
-      await channel.send({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle('🎟️ New Ticket')
-            .setDescription(`Ticket created by ${message.author.tag}`)
-            .addFields(
-              { name: 'User', value: `<@${message.author.id}>` },
-              { name: 'Initial Message', value: message.content }
-            )
-            .setColor(0x00FF00)
-            .setTimestamp()
-        ]
-      });
-
-      // Notify user
-      await message.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle('🎟️ Ticket Created')
-            .setDescription('Your ticket has been created! Staff will respond shortly.')
-            .setColor(0x00FF00)
-        ]
-      });
-
-    } catch (error) {
-      console.error('Error creating ticket:', error);
-      await message.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setDescription('❌ Failed to create ticket. Please try again later.')
-            .setColor(0xFF0000)
-        ]
-      });
-    }
-  }
-});
-
-// Web server
-const app = express();
-app.get('/', (req, res) => res.send('🟢 Bot Online'));
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🌐 Web server listening on port ${PORT}`));
-
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  await mongoClient.close();
-  client.destroy();
-  process.exit(0);
-});
-
-// Start bot
-client.login(process.env.DISCORD_TOKEN);
-
-// Add this after the other command handlers
-async function handleMaintenanceLB(interaction) {
-  if (interaction.user.id !== OWNER_ID) {
-    return interaction.reply({ content: '❌ Only the bot owner can use this command.', ephemeral: true });
-  }
-
-  const duration = interaction.options.getInteger('time');
-  if (duration <= 0) {
-    return interaction.reply({ content: '❌ Please provide a valid duration in minutes.', ephemeral: true });
-  }
-
-  try {
-    const response = await fetch('https://backend-lb-82a59383ceaf.herokuapp.com/maintenance', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        duration: duration,
-        action: 'enable'
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to enable maintenance mode');
-    }
-
-    const endTime = new Date(Date.now() + duration * 60000);
-    await interaction.reply(`✅ Maintenance mode enabled for ${duration} minutes. Will end at ${endTime.toLocaleString()}`);
-  } catch (error) {
-    console.error('Error enabling maintenance mode:', error);
-    await interaction.reply('❌ Failed to enable maintenance mode. Please try again later.');
-  }
-}
-
-async function handleForceMaintenanceOff(interaction) {
-  if (interaction.user.id !== OWNER_ID) {
-    return interaction.reply({ content: '❌ Only the bot owner can use this command.', ephemeral: true });
-  }
-
-  try {
-    const response = await fetch('https://backend-lb-82a59383ceaf.herokuapp.com/maintenance', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        action: 'disable'
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to disable maintenance mode');
-    }
-
-    await interaction.reply('✅ Maintenance mode has been disabled.');
-  } catch (error) {
-    console.error('Error disabling maintenance mode:', error);
-    await interaction.reply('❌ Failed to disable maintenance mode. Please try again later.');
-  }
-}
-
-// Button interaction handler for copying receipts
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isButton()) return;
-  
-  if (interaction.customId.startsWith('copy_receipt_')) {
-    try {
-      // Get the receipt text from the message content
-      const receiptText = interaction.message.embeds[0].description;
-      
-      // Create a copy of the original embed but without footer
-      const newEmbed = EmbedBuilder.from(interaction.message.embeds[0])
-        .setTimestamp();
-      
-      // Update the message with a disabled button
-      const disabledRow = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId(interaction.customId)
-            .setLabel('📋 Copied')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(true)
-        );
-      
-      await interaction.update({
-        embeds: [newEmbed],
-        components: [disabledRow]
-      });
-      
-      // Send the text to the user as an ephemeral message for easy copying
-      await interaction.followUp({
-        content: "```\n" + receiptText + "\n```",
-        ephemeral: true
-      });
-    } catch (error) {
-      console.error('Error handling copy receipt button:', error);
-      await interaction.reply({
-        content: '❌ Failed to copy receipt. Please try again.',
-        ephemeral: true
-      });
-    }
-  }
-});
-
-// Button interaction handler for copying receipts
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isButton()) return;
-  
-  if (interaction.customId.startsWith('copy_receipt_')) {
-    try {
-      // Get the receipt text from the message content
-      const receiptText = interaction.message.embeds[0].description;
-      
-      // Create a copy of the original embed but without footer
-      const newEmbed = EmbedBuilder.from(interaction.message.embeds[0])
-        .setTimestamp();
-      
-      // Update the message with a disabled button
-      const disabledRow = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId(interaction.customId)
-            .setLabel('📋 Copied')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(true)
-        );
-      
-      await interaction.update({
-        embeds: [newEmbed],
-        components: [disabledRow]
-      });
-      
-      // Send the text to the user as an ephemeral message for easy copying
-      await interaction.followUp({
-        content: "```\n" + receiptText + "\n```",
-        ephemeral: true
-      });
-    } catch (error) {
-      console.error('Error handling copy receipt button:', error);
-      await interaction.reply({
-        content: '❌ Failed to copy receipt. Please try again.',
-        ephemeral: true
-      });
-    }
-  }
-});
+      const spreadsheet = state.spreadsheet
