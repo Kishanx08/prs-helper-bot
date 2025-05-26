@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Partials, EmbedBuilder, REST, Routes } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { google } = require('googleapis');
 const { MongoClient } = require('mongodb');
 const express = require('express');
@@ -647,17 +647,34 @@ client.on('interactionCreate', async interaction => {
             day: '2-digit',
             month: '2-digit',
             year: 'numeric'
-          });
+          });            const receiptText = `Buyer Name: ${buyerName}
+Buyer Mobile Number: ${mobile}
+Model: ${model}
+License Plate: ${license}
+Total to Pay: $${total}
+
+Booking Amount: $${bookingAmount}
+Amount Due: $${amountDue}
+Validity 1 Week Till ${formattedDate}`;
+
             const receiptEmbed = new EmbedBuilder()
-            .setTitle('🚗 Car Booking Receipt')
-            .setDescription(`**CAR BOOKING RECEIPT**\n\nBuyer Name: ${buyerName}\nBuyer Mobile Number: ${mobile}\nModel: ${model}\nLicense Plate: ${license}\nTotal to Pay: $${total}\n\nBooking Amount: $${bookingAmount}\nAmount Due: $${amountDue}\nValidity 1 Week Till ${formattedDate}`)
-            .setColor(0x00FF00)
-            .setTimestamp();
+              .setTitle('🚗 Car Booking Receipt')
+              .setDescription(receiptText)
+              .setColor(0x00FF00)
+              .setTimestamp();
+
+            const row = new ActionRowBuilder()
+              .addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`copy_receipt_${Date.now()}`)
+                  .setLabel('📋 Copy Receipt')
+                  .setStyle(ButtonStyle.Primary)
+              );
           
-          // Send to the specified channel
-          const bookingChannel = await client.channels.fetch('1354337998451507220');
-          if (bookingChannel) {
-            await bookingChannel.send({ embeds: [receiptEmbed] });
+            // Send to the specified channel
+            const bookingChannel = await client.channels.fetch('1354337998451507220');
+            if (bookingChannel) {
+              await bookingChannel.send({ embeds: [receiptEmbed], components: [row] });
           }
           
           // Send confirmation to the user
@@ -857,7 +874,7 @@ client.on('interactionCreate', async interaction => {
                   .setDescription(permissionList)
                   .setColor(0x00FFFF)
                   .setFooter({ text: 'Administrators have all permissions by default' })
-              ],
+              },
               ephemeral: true
             });
             break;      case 'setticketcategory':
@@ -1496,3 +1513,89 @@ async function handleForceMaintenanceOff(interaction) {
     await interaction.reply('❌ Failed to disable maintenance mode. Please try again later.');
   }
 }
+
+// Button interaction handler for copying receipts
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isButton()) return;
+  
+  if (interaction.customId.startsWith('copy_receipt_')) {
+    try {
+      // Get the receipt text from the message content
+      const receiptText = interaction.message.embeds[0].description;
+      
+      // Create a copy of the original embed but without footer
+      const newEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+        .setTimestamp();
+      
+      // Update the message with a disabled button
+      const disabledRow = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId(interaction.customId)
+            .setLabel('📋 Copied')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(true)
+        );
+      
+      await interaction.update({
+        embeds: [newEmbed],
+        components: [disabledRow]
+      });
+      
+      // Send the text to the user as an ephemeral message for easy copying
+      await interaction.followUp({
+        content: "```\n" + receiptText + "\n```",
+        ephemeral: true
+      });
+    } catch (error) {
+      console.error('Error handling copy receipt button:', error);
+      await interaction.reply({
+        content: '❌ Failed to copy receipt. Please try again.',
+        ephemeral: true
+      });
+    }
+  }
+});
+
+// Button interaction handler for copying receipts
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isButton()) return;
+  
+  if (interaction.customId.startsWith('copy_receipt_')) {
+    try {
+      // Get the receipt text from the message content
+      const receiptText = interaction.message.embeds[0].description;
+      
+      // Create a copy of the original embed but without footer
+      const newEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+        .setTimestamp();
+      
+      // Update the message with a disabled button
+      const disabledRow = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId(interaction.customId)
+            .setLabel('📋 Copied')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(true)
+        );
+      
+      await interaction.update({
+        embeds: [newEmbed],
+        components: [disabledRow]
+      });
+      
+      // Send the text to the user as an ephemeral message for easy copying
+      await interaction.followUp({
+        content: "```\n" + receiptText + "\n```",
+        ephemeral: true
+      });
+    } catch (error) {
+      console.error('Error handling copy receipt button:', error);
+      await interaction.reply({
+        content: '❌ Failed to copy receipt. Please try again.',
+        ephemeral: true
+      });
+    }
+  }
+});
