@@ -580,7 +580,7 @@ client.on('interactionCreate', async interaction => {
 
       // Reply with the receipt text
       await interaction.reply({
-        content: `Here's your receipt:\n\`\`\`${embed.description}\`\`\``,
+        content: `Here's your receipt:\n\${embed.description}\`,
         ephemeral: true
       });
 
@@ -614,8 +614,7 @@ client.on('interactionCreate', async interaction => {
   try {
     switch (interaction.commandName) {
       case 'addform':
-      case 'removeform':
-      case 'listforms':
+      case 'removeform': {
         // Permission check for all form-related commands
         if (!await hasPermission(interaction.user.id, interaction.guild.id, 'manage_forms')) {
           return interaction.reply({
@@ -633,16 +632,13 @@ client.on('interactionCreate', async interaction => {
           await handleAddForm(interaction);
           break;
         }
-        
         if (interaction.commandName === 'removeform') {
           const spreadsheetName = interaction.options.getString('sheetname');
-          
           // Only look for forms in current server
           const entry = [...formChannels.entries()].find(
             ([_, config]) => config.sheet_name === spreadsheetName && 
             config.guild_id === interaction.guild.id
           );
-          
           if (entry) {
             formChannels.delete(entry[0]);
             await formChannelsCollection.deleteOne({ 
@@ -667,8 +663,9 @@ client.on('interactionCreate', async interaction => {
           }
           break;
         }
-
-      case 'listforms':
+        break;
+      }
+      case 'listforms': {
         // Only show forms from current server
         const list = Array.from(formChannels)
           .filter(([_, config]) => config.guild_id === interaction.guild.id)
@@ -676,7 +673,6 @@ client.on('interactionCreate', async interaction => {
             `- ${sheet_name} → <#${channelId}>`
           )
           .join('\n') || 'No tracked forms in this server';
-        
         await interaction.reply({
           embeds: [
             new EmbedBuilder()
@@ -684,11 +680,11 @@ client.on('interactionCreate', async interaction => {
               .setDescription(list)
               .setColor(0x00FF00)
           ],
-          ephemeral: true  // This makes the message only visible to the command user
+          ephemeral: true
         });
         break;
-
-      case 'ping':
+      }
+      case 'ping': {
         const latency = Date.now() - interaction.createdTimestamp;
         await interaction.reply({
           embeds: [
@@ -698,12 +694,11 @@ client.on('interactionCreate', async interaction => {
           ]
         });
         break;
-
-      case 'cats':
+      }
+      case 'cats': {
         try {
           const response = await fetch('https://api.thecatapi.com/v1/images/search');
           const [data] = await response.json();
-          
           await interaction.reply({
             embeds: [
               new EmbedBuilder()
@@ -724,7 +719,9 @@ client.on('interactionCreate', async interaction => {
             ephemeral: true
           });
         }
-        break;      case 'booking':
+        break;
+      }
+      case 'booking': {
         try {
           const buyerName = interaction.options.getString('buyer_name');
           const mobile = interaction.options.getString('mobile');
@@ -732,10 +729,8 @@ client.on('interactionCreate', async interaction => {
           const license = interaction.options.getString('license');
           const total = interaction.options.getNumber('total');
           const bookingAmount = interaction.options.getNumber('booking_amount');
-          
           // Calculate due amount
           const amountDue = total - bookingAmount;
-          
           // Calculate validity date (today + 6 days = 7 days total)
           const validityDate = new Date();
           validityDate.setDate(validityDate.getDate() + 6);
@@ -743,36 +738,25 @@ client.on('interactionCreate', async interaction => {
             day: '2-digit',
             month: '2-digit',
             year: 'numeric'
-          });            const receiptText = `Buyer Name: ${buyerName}
-Buyer Mobile Number: ${mobile}
-Model: ${model}
-License Plate: ${license}
-Total to Pay: $${total}
-
-Booking Amount: $${bookingAmount}
-Amount Due: $${amountDue}
-Validity 1 Week Till ${formattedDate}`;
-
-            const receiptEmbed = new EmbedBuilder()
-              .setTitle('🚗 Car Booking Receipt')
-              .setDescription(receiptText)
-              .setColor(0x00FF00)
-              .setTimestamp();
-
-            const row = new ActionRowBuilder()
-              .addComponents(
-                new ButtonBuilder()
-                  .setCustomId(`copy_receipt_${Date.now()}`)
-                  .setLabel('📋 Copy Receipt')
-                  .setStyle(ButtonStyle.Primary)
-              );
-          
-            // Send to the specified channel
-            const bookingChannel = await client.channels.fetch('1354337998451507220');
-            if (bookingChannel) {
-              await bookingChannel.send({ embeds: [receiptEmbed], components: [row] });
+          });
+          const receiptText = `Buyer Name: ${buyerName}\nBuyer Mobile Number: ${mobile}\nModel: ${model}\nLicense Plate: ${license}\nTotal to Pay: $${total}\n\nBooking Amount: $${bookingAmount}\nAmount Due: $${amountDue}\nValidity 1 Week Till ${formattedDate}`;
+          const receiptEmbed = new EmbedBuilder()
+            .setTitle('🚗 Car Booking Receipt')
+            .setDescription(receiptText)
+            .setColor(0x00FF00)
+            .setTimestamp();
+          const row = new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId(`copy_receipt_${Date.now()}`)
+                .setLabel('📋 Copy Receipt')
+                .setStyle(ButtonStyle.Primary)
+            );
+          // Send to the specified channel
+          const bookingChannel = await client.channels.fetch('1354337998451507220');
+          if (bookingChannel) {
+            await bookingChannel.send({ embeds: [receiptEmbed], components: [row] });
           }
-          
           // Send confirmation to the user
           await interaction.reply({
             embeds: [
@@ -794,7 +778,8 @@ Validity 1 Week Till ${formattedDate}`;
           });
         }
         break;
-      case 'sell':
+      }
+      case 'sell': {
         try {
           const buyerName = interaction.options.getString('buyer_name');
           const buyerCid = interaction.options.getString('buyer_cid');
@@ -803,29 +788,14 @@ Validity 1 Week Till ${formattedDate}`;
           const license = interaction.options.getString('license');
           const price = interaction.options.getNumber('price');
           const discount = interaction.options.getNumber('discount');
-          
           // Calculate final price after discount
           const finalPrice = price - (price * (discount / 100));
-          
-          const receiptText = `**VEHICLE PURCHASE RECEIPT**
-
-Buyer Name - ${buyerName}
-Buyer CID - ${buyerCid}
-Buyer Number - ${buyerNumber}
-
-Vehicle Model - ${model}
-License Plate - ${license}
-
-Price - $${price}
-Discount - ${discount}%
-Total to Pay - $${finalPrice}`;
-
+          const receiptText = `**VEHICLE PURCHASE RECEIPT**\n\nBuyer Name - ${buyerName}\nBuyer CID - ${buyerCid}\nBuyer Number - ${buyerNumber}\n\nVehicle Model - ${model}\nLicense Plate - ${license}\n\nPrice - $${price}\nDiscount - ${discount}%\nTotal to Pay - $${finalPrice}`;
           const receiptEmbed = new EmbedBuilder()
             .setTitle('🚗 Vehicle Purchase Receipt')
             .setDescription(receiptText)
             .setColor(0x00FF00)
             .setTimestamp();
-
           const row = new ActionRowBuilder()
             .addComponents(
               new ButtonBuilder()
@@ -833,13 +803,11 @@ Total to Pay - $${finalPrice}`;
                 .setLabel('📋 Copy Receipt')
                 .setStyle(ButtonStyle.Primary)
             );
-        
           // Send to the specified channel
           const sellChannel = await client.channels.fetch('1354337998451507220');
           if (sellChannel) {
             await sellChannel.send({ embeds: [receiptEmbed], components: [row] });
           }
-        
           // Send confirmation to the user
           await interaction.reply({
             embeds: [
@@ -861,8 +829,8 @@ Total to Pay - $${finalPrice}`;
           });
         }
         break;
-
-      case 'dm':
+      }
+      case 'dm': {
         // Permission check - must come FIRST
         if (!await hasPermission(interaction.user.id, interaction.guild.id, 'send_dms')) {
           return interaction.reply({
@@ -874,11 +842,9 @@ Total to Pay - $${finalPrice}`;
             ephemeral: true
           });
         }
-  
         // Original DM command handling
         const user = interaction.options.getUser('user');
         const text = interaction.options.getString('text');
-  
         try {
           await user.send({
             embeds: [
@@ -907,19 +873,16 @@ Total to Pay - $${finalPrice}`;
           });
         }
         break;
-       
-      case 'checkupdates':
+      }
+      case 'checkupdates': {
         try {
           // Acknowledge the interaction immediately since polling might take time
           await interaction.deferReply({ ephemeral: true });
-            
           // Run the polling function
           await pollSheets();
-            
           // Get all forms in the current guild
           const guildForms = Array.from(formChannels.values())
             .filter(config => config.guild_id === interaction.guild.id);
-            
           if (guildForms.length === 0) {
             await interaction.editReply({
               embeds: [
@@ -930,7 +893,6 @@ Total to Pay - $${finalPrice}`;
             });
             return;
           }
-            
           await interaction.editReply({
             embeds: [
               new EmbedBuilder()
@@ -945,102 +907,97 @@ Total to Pay - $${finalPrice}`;
                 )
             ]
           });
-
         } catch (error) {
-            console.error('Checkupdates error:', error);
-            await interaction.editReply({
-              embeds: [
-                new EmbedBuilder()
-                  .setDescription('❌ Failed to check for updates')
-                  .setColor(0xFF0000)
-              ]
-            });
-          }
-          break;
-
-      case 'giveperms':
-          const userToPermit = interaction.options.getUser('user');
-          const permissionToGrant = interaction.options.getString('permission');
-
-          await permissionsCollection.updateOne(
-            {
-              user_id: userToPermit.id,
-              guild_id: interaction.guild.id,
-              permission: permissionToGrant
-            },
-            { $set: { 
-              user_id: userToPermit.id,
-              guild_id: interaction.guild.id,
-              permission: permissionToGrant,
-              granted_by: interaction.user.id,
-              granted_at: new Date()
-            }},
-            { upsert: true }
-          );
-
+          console.error('Checkupdates error:', error);
+          await interaction.editReply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ Failed to check for updates')
+                .setColor(0xFF0000)
+            ]
+          });
+        }
+        break;
+      }
+      case 'giveperms': {
+        const userToPermit = interaction.options.getUser('user');
+        const permissionToGrant = interaction.options.getString('permission');
+        await permissionsCollection.updateOne(
+          {
+            user_id: userToPermit.id,
+            guild_id: interaction.guild.id,
+            permission: permissionToGrant
+          },
+          { $set: { 
+            user_id: userToPermit.id,
+            guild_id: interaction.guild.id,
+            permission: permissionToGrant,
+            granted_by: interaction.user.id,
+            granted_at: new Date()
+          }},
+          { upsert: true }
+        );
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription(`✅ Granted ${permissionToGrant} permission to ${userToPermit.tag}`)
+              .setColor(0x00FF00)
+          ],
+          ephemeral: true
+        });
+        break;
+      }
+      case 'revokeperms': {
+        const userToRevoke = interaction.options.getUser('user');
+        const permissionToRevoke = interaction.options.getString('permission');
+        const result = await permissionsCollection.deleteOne({
+          user_id: userToRevoke.id,
+          guild_id: interaction.guild.id,
+          permission: permissionToRevoke
+        });
+        if (result.deletedCount > 0) {
           await interaction.reply({
             embeds: [
               new EmbedBuilder()
-                .setDescription(`✅ Granted ${permissionToGrant} permission to ${userToPermit.tag}`)
+                .setDescription(`✅ Revoked ${permissionToRevoke} permission from ${userToRevoke.tag}`)
                 .setColor(0x00FF00)
             ],
             ephemeral: true
           });
-          break;
-
-      case 'revokeperms':
-          const userToRevoke = interaction.options.getUser('user');
-          const permissionToRevoke = interaction.options.getString('permission');
-
-          const result = await permissionsCollection.deleteOne({
-            user_id: userToRevoke.id,
-            guild_id: interaction.guild.id,
-            permission: permissionToRevoke
+        } else {
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription(`ℹ️ ${userToRevoke.tag} didn't have ${permissionToRevoke} permission`)
+                .setColor(0xFFFF00)
+            ],
+            ephemeral: true
           });
-
-          if (result.deletedCount > 0) {
-            await interaction.reply({
-              embeds: [
-                new EmbedBuilder()
-                  .setDescription(`✅ Revoked ${permissionToRevoke} permission from ${userToRevoke.tag}`)
-                  .setColor(0x00FF00)
-              ],
-              ephemeral: true
-            });
-          } else {
-            await interaction.reply({
-              embeds: [
-                new EmbedBuilder()
-                  .setDescription(`ℹ️ ${userToRevoke.tag} didn't have ${permissionToRevoke} permission`)
-                  .setColor(0xFFFF00)
-              ],
-              ephemeral: true
-            });
-          }
-          break;
-
-      case 'checkperms':
-          const targetUser = interaction.options.getUser('user') || interaction.user;
-          const userPermissions = await permissionsCollection.find({
-            user_id: targetUser.id,
-            guild_id: interaction.guild.id
-          }).toArray();
-
-          const permissionList = userPermissions.length > 0 
-             ? userPermissions.map(p => `• ${p.permission}`).join('\n')
-             : 'No special permissions';
-
-             await interaction.reply({
-              embeds: [
-                new EmbedBuilder()
-                  .setTitle(`🔐 Permissions for ${targetUser.tag}`)
-                  .setDescription(permissionList)
-                  .setColor(0x00FFFF)
-                  .setFooter({ text: 'Administrators have all permissions by default' })
-              ],
-              ephemeral: true
-            });
-            break;      case 'setticketcategory':
+        }
+        break;
+      }
+      case 'checkperms': {
+        const targetUser = interaction.options.getUser('user') || interaction.user;
+        const userPermissions = await permissionsCollection.find({
+          user_id: targetUser.id,
+          guild_id: interaction.guild.id
+        }).toArray();
+        const permissionList = userPermissions.length > 0 
+           ? userPermissions.map(p => `• ${p.permission}`).join('\n')
+           : 'No special permissions';
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle(`🔐 Permissions for ${targetUser.tag}`)
+              .setDescription(permissionList)
+              .setColor(0x00FFFF)
+              .setFooter({ text: 'Administrators have all permissions by default' })
+          ],
+          ephemeral: true
+        });
+        break;
+      }
+      case 'setticketcategory': {
         // Check for administrator permissions
         if (!interaction.member.permissions.has('Administrator')) {
           return interaction.reply({
@@ -1052,14 +1009,12 @@ Total to Pay - $${finalPrice}`;
             ephemeral: true
           });
         }
-        
         const categoryId = interaction.options.getString('category');
         await ticketSettingsCollection.updateOne(
           { guild_id: interaction.guild.id },
           { $set: { ticket_category: categoryId } },
           { upsert: true }
         );
-        
         await interaction.reply({
           embeds: [
             new EmbedBuilder()
@@ -1070,7 +1025,9 @@ Total to Pay - $${finalPrice}`;
           ],
           ephemeral: true
         });
-        break;      case 'closeticket':
+        break;
+      }
+      case 'closeticket': {
         try {
           // Check for staff role or administrator permission
           if (!interaction.member.permissions.has('Administrator') && !interaction.member.permissions.has('ManageChannels')) {
@@ -1083,7 +1040,6 @@ Total to Pay - $${finalPrice}`;
               ephemeral: true
             });
           }
-
           if (!interaction.channel.name.startsWith('ticket-')) {
             return interaction.reply({
               embeds: [
@@ -1094,12 +1050,10 @@ Total to Pay - $${finalPrice}`;
               ephemeral: true
             });
           }
-
           const ticketData = await activeTicketsCollection.findOne({ 
             channel_id: interaction.channel.id,
             status: 'open'
           });
-
           if (!ticketData) {
             return interaction.reply({
               embeds: [
@@ -1110,16 +1064,13 @@ Total to Pay - $${finalPrice}`;
               ephemeral: true
             });
           }
-
           // Acknowledge the interaction first
           await interaction.deferReply();
-
           // Update ticket status first
           await activeTicketsCollection.updateOne(
             { channel_id: interaction.channel.id },
             { $set: { status: 'closed' } }
           );
-
           // Notify user
           const user = await client.users.fetch(ticketData.user_id);
           await user.send({
@@ -1131,7 +1082,6 @@ Total to Pay - $${finalPrice}`;
                 .setTimestamp()
             ]
           }).catch(() => console.log('Could not DM user about ticket closure'));
-
           // Edit the initial reply
           await interaction.editReply({
             embeds: [
@@ -1140,10 +1090,8 @@ Total to Pay - $${finalPrice}`;
                 .setColor(0x00FF00)
             ]
           });
-
           // Delete channel after 5 seconds
           setTimeout(() => interaction.channel.delete().catch(console.error), 5000);
-
         } catch (error) {
           console.error('Error closing ticket:', error);
           const errorMessage = {
@@ -1154,14 +1102,15 @@ Total to Pay - $${finalPrice}`;
             ],
             ephemeral: true
           };
-          
           if (interaction.deferred) {
             await interaction.editReply(errorMessage);
           } else {
             await interaction.reply(errorMessage);
           }
         }
-        break;case 'deleteticket':
+        break;
+      }
+      case 'deleteticket': {
         // Check for staff role or administrator permission
         if (!interaction.member.permissions.has('Administrator') && !interaction.member.permissions.has('ManageChannels')) {
           return interaction.reply({
@@ -1173,7 +1122,6 @@ Total to Pay - $${finalPrice}`;
             ephemeral: true
           });
         }
-        
         if (!interaction.channel.name.startsWith('ticket-')) {
           return interaction.reply({
             embeds: [
@@ -1184,11 +1132,9 @@ Total to Pay - $${finalPrice}`;
             ephemeral: true
           });
         }
-
         const ticketToDelete = await activeTicketsCollection.findOne({
           channel_id: interaction.channel.id
         });
-
         if (!ticketToDelete) {
           return interaction.reply({
             embeds: [
@@ -1199,7 +1145,6 @@ Total to Pay - $${finalPrice}`;
             ephemeral: true
           });
         }
-
         try {
           // Notify user before deleting
           const user = await client.users.fetch(ticketToDelete.user_id);
@@ -1212,12 +1157,10 @@ Total to Pay - $${finalPrice}`;
                 .setTimestamp()
             ]
           }).catch(() => console.log('Could not DM user about ticket deletion'));
-
           // Delete from database
           await activeTicketsCollection.deleteOne({
             channel_id: interaction.channel.id
           });
-
           await interaction.reply({
             embeds: [
               new EmbedBuilder()
@@ -1225,10 +1168,8 @@ Total to Pay - $${finalPrice}`;
                 .setColor(0x00FF00)
             ]
           });
-
           // Delete the channel after a short delay
           setTimeout(() => interaction.channel.delete(), 2000);
-
         } catch (error) {
           console.error('Error deleting ticket:', error);
           await interaction.reply({
@@ -1241,38 +1182,40 @@ Total to Pay - $${finalPrice}`;
           });
         }
         break;
-
-      case 'maintenancelb':
+      }
+      case 'maintenancelb': {
         await handleMaintenanceLB(interaction);
         break;
-      case 'forcemaintenanceoff':
+      }
+      case 'forcemaintenanceoff': {
         await handleForceMaintenanceOff(interaction);
         break;
-
-        default:
-          await interaction.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setDescription('❌ Unknown command')
-                .setColor(0xFF0000)
-            ],
-            ephemeral: true
-          });
       }
-    } catch (error) {
-      console.error('❌ Interaction error:', error);
-      if (!interaction.replied && !interaction.deferred) {
+      default: {
         await interaction.reply({
           embeds: [
             new EmbedBuilder()
-              .setDescription('⚠️ An error occurred')
+              .setDescription('❌ Unknown command')
               .setColor(0xFF0000)
           ],
           ephemeral: true
         });
       }
     }
-  });
+  } catch (error) {
+    console.error('❌ Interaction error:', error);
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setDescription('⚠️ An error occurred')
+            .setColor(0xFF0000)
+        ],
+        ephemeral: true
+      });
+    }
+  }
+});
 
 // Form setup flow
 async function handleAddForm(interaction) {
@@ -1360,3 +1303,7 @@ app.get('/', (req, res) => res.send('Bot is running.'));
 app.listen(PORT, () => {
   console.log(`Express server listening on port ${PORT}`);
 });
+
+// Ensure the bot logs in
+client.login(process.env.DISCORD_TOKEN);
+console.log('Logging in Discord bot...');
