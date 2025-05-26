@@ -874,7 +874,7 @@ Validity 1 Week Till ${formattedDate}`;
                   .setDescription(permissionList)
                   .setColor(0x00FFFF)
                   .setFooter({ text: 'Administrators have all permissions by default' })
-              },
+              ],
               ephemeral: true
             });
             break;      case 'setticketcategory':
