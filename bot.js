@@ -1352,3 +1352,11 @@ client.on('messageCreate', async message => {
         console.error('Error in messageCreate handler:', error);
       }
     });
+
+// Minimal Express server for Render.com port scan
+const app = express();
+const PORT = process.env.PORT || 3000;
+app.get('/', (req, res) => res.send('Bot is running.'));
+app.listen(PORT, () => {
+  console.log(`Express server listening on port ${PORT}`);
+});
