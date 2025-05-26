@@ -159,6 +159,48 @@ const commands = [
   {
     name: 'forcemaintenanceoff',
     description: 'Force turn off maintenance mode'
+  },
+  {
+    name: 'booking',
+    description: 'Create a car booking receipt',
+    options: [
+      {
+        name: 'buyer_name',
+        description: 'Name of the buyer',
+        type: 3,
+        required: true
+      },
+      {
+        name: 'mobile',
+        description: 'Buyer mobile number',
+        type: 3,
+        required: true
+      },
+      {
+        name: 'model',
+        description: 'Car model',
+        type: 3,
+        required: true
+      },
+      {
+        name: 'license',
+        description: 'License plate number',
+        type: 3,
+        required: true
+      },
+      {
+        name: 'total',
+        description: 'Total amount to pay',
+        type: 10,
+        required: true
+      },
+      {
+        name: 'booking_amount',
+        description: 'Booking amount paid',
+        type: 10,
+        required: true
+      }
+    ]
   }
 ];
 
@@ -581,6 +623,58 @@ client.on('interactionCreate', async interaction => {
             embeds: [
               new EmbedBuilder()
                 .setDescription('❌ Failed to fetch cat image')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
+          });
+        }
+        break;      case 'booking':
+        try {
+          const buyerName = interaction.options.getString('buyer_name');
+          const mobile = interaction.options.getString('mobile');
+          const model = interaction.options.getString('model');
+          const license = interaction.options.getString('license');
+          const total = interaction.options.getNumber('total');
+          const bookingAmount = interaction.options.getNumber('booking_amount');
+          
+          // Calculate due amount
+          const amountDue = total - bookingAmount;
+          
+          // Calculate validity date (today + 6 days = 7 days total)
+          const validityDate = new Date();
+          validityDate.setDate(validityDate.getDate() + 6);
+          const formattedDate = validityDate.toLocaleDateString('en-US', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+          });
+            const receiptEmbed = new EmbedBuilder()
+            .setTitle('🚗 Car Booking Receipt')
+            .setDescription(`**CAR BOOKING RECEIPT**\n\nBuyer Name: ${buyerName}\nBuyer Mobile Number: ${mobile}\nModel: ${model}\nLicense Plate: ${license}\nTotal to Pay: $${total}\n\nBooking Amount: $${bookingAmount}\nAmount Due: $${amountDue}\nValidity 1 Week Till ${formattedDate}`)
+            .setColor(0x00FF00)
+            .setTimestamp();
+          
+          // Send to the specified channel
+          const bookingChannel = await client.channels.fetch('1354337998451507220');
+          if (bookingChannel) {
+            await bookingChannel.send({ embeds: [receiptEmbed] });
+          }
+          
+          // Send confirmation to the user
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('✅ Booking receipt has been posted in <#1354337998451507220>')
+                .setColor(0x00FF00)
+            ],
+            ephemeral: true
+          });
+        } catch (error) {
+          console.error('Booking error:', error);
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ Failed to create booking receipt')
                 .setColor(0xFF0000)
             ],
             ephemeral: true
