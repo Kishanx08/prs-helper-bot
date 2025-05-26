@@ -201,6 +201,54 @@ const commands = [
         required: true
       }
     ]
+  },
+  {
+    name: 'sell',
+    description: 'Create a vehicle purchase receipt',
+    options: [
+      {
+        name: 'buyer_name',
+        description: 'Name of the buyer',
+        type: 3,
+        required: true
+      },
+      {
+        name: 'buyer_cid',
+        description: 'CID of the buyer',
+        type: 3,
+        required: true
+      },
+      {
+        name: 'buyer_number',
+        description: 'Contact number of the buyer',
+        type: 3,
+        required: true
+      },
+      {
+        name: 'model',
+        description: 'Vehicle model',
+        type: 3,
+        required: true
+      },
+      {
+        name: 'license',
+        description: 'License plate number',
+        type: 3,
+        required: true
+      },
+      {
+        name: 'price',
+        description: 'Original price',
+        type: 10,
+        required: true
+      },
+      {
+        name: 'discount',
+        description: 'Discount percentage (0-100)',
+        type: 10,
+        required: true
+      }
+    ]
   }
 ];
 
@@ -746,6 +794,73 @@ Validity 1 Week Till ${formattedDate}`;
           });
         }
         break;
+      case 'sell':
+        try {
+          const buyerName = interaction.options.getString('buyer_name');
+          const buyerCid = interaction.options.getString('buyer_cid');
+          const buyerNumber = interaction.options.getString('buyer_number');
+          const model = interaction.options.getString('model');
+          const license = interaction.options.getString('license');
+          const price = interaction.options.getNumber('price');
+          const discount = interaction.options.getNumber('discount');
+          
+          // Calculate final price after discount
+          const finalPrice = price - (price * (discount / 100));
+          
+          const receiptText = `**VEHICLE PURCHASE RECEIPT**
+
+Buyer Name - ${buyerName}
+Buyer CID - ${buyerCid}
+Buyer Number - ${buyerNumber}
+
+Vehicle Model - ${model}
+License Plate - ${license}
+
+Price - $${price}
+Discount - ${discount}%
+Total to Pay - $${finalPrice}`;
+
+          const receiptEmbed = new EmbedBuilder()
+            .setTitle('🚗 Vehicle Purchase Receipt')
+            .setDescription(receiptText)
+            .setColor(0x00FF00)
+            .setTimestamp();
+
+          const row = new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId(`copy_receipt_${Date.now()}`)
+                .setLabel('📋 Copy Receipt')
+                .setStyle(ButtonStyle.Primary)
+            );
+        
+          // Send to the specified channel
+          const sellChannel = await client.channels.fetch('1354337998451507220');
+          if (sellChannel) {
+            await sellChannel.send({ embeds: [receiptEmbed], components: [row] });
+          }
+        
+          // Send confirmation to the user
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('✅ Vehicle purchase receipt has been posted in <#1354337998451507220>')
+                .setColor(0x00FF00)
+            ],
+            ephemeral: true
+          });
+        } catch (error) {
+          console.error('Sell error:', error);
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ Failed to create vehicle purchase receipt')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
+          });
+        }
+        break;
 
       case 'dm':
         // Permission check - must come FIRST
@@ -1223,5 +1338,17 @@ client.on('messageCreate', async message => {
     // Clear the previous timeout
     clearTimeout(state.timeout);
 
-    if (state.step === 'selectSpreadsheet') {
-      const spreadsheet = state.spreadsheet
+        if (state.step === 'selectSpreadsheet') {
+          // TODO: Implement spreadsheet selection logic here
+          // Example placeholder:
+          // const spreadsheet = state.spreadsheets.find(f => f.name === message.content.trim());
+          // if (!spreadsheet) {
+          //   await message.reply('❌ Spreadsheet not found. Please try again.');
+          //   return;
+          // }
+          // Continue with next step or logic...
+        }
+      } catch (error) {
+        console.error('Error in messageCreate handler:', error);
+      }
+    });
