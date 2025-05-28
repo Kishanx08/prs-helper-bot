@@ -1444,20 +1444,79 @@ client.on('messageCreate', async message => {
     // Clear the previous timeout
     clearTimeout(state.timeout);
 
-        if (state.step === 'selectSpreadsheet') {
-          // TODO: Implement spreadsheet selection logic here
-          // Example placeholder:
-          // const spreadsheet = state.spreadsheets.find(f => f.name === message.content.trim());
-          // if (!spreadsheet) {
-          //   await message.reply('❌ Spreadsheet not found. Please try again.');
-          //   return;
-          // }
-          // Continue with next step or logic...
-        }
-      } catch (error) {
-        console.error('Error in messageCreate handler:', error);
+    if (state.step === 'selectSpreadsheet') {
+      const spreadsheet = state.spreadsheets.find(f => f.name === message.content.trim());
+      if (!spreadsheet) {
+        await message.reply('❌ Spreadsheet not found. Please reply with the exact name from the list.');
+        // Reset timeout
+        state.timeout = setTimeout(() => {
+          clearUserState(userId);
+        }, 15000);
+        return;
       }
-    });
+      // Save selected spreadsheet and ask for channel
+      state.selectedSpreadsheet = spreadsheet;
+      state.step = 'selectChannel';
+      state.timeout = setTimeout(() => {
+        clearUserState(userId);
+        message.reply('⌛ Timed out! Use `/addform` again to restart.');
+      }, 15000);
+      await message.reply('✅ Spreadsheet selected! Now mention the channel (e.g. #channel) where responses should be posted.');
+      return;
+    }
+    if (state.step === 'selectChannel') {
+      const channelMention = message.mentions.channels.first();
+      if (!channelMention) {
+        await message.reply('❌ Please mention a valid channel (e.g. #channel).');
+        // Reset timeout
+        state.timeout = setTimeout(() => {
+          clearUserState(userId);
+        }, 15000);
+        return;
+      }
+      // Save to DB and in-memory
+      const spreadsheet = state.selectedSpreadsheet;
+      const channelId = channelMention.id;
+      const guildId = message.guild.id;
+      const sheetName = spreadsheet.name;
+      const spreadsheetId = spreadsheet.id;
+      // Save to DB
+      await formChannelsCollection.updateOne(
+        { guild_id: guildId, spreadsheet_id: spreadsheetId },
+        {
+          $set: {
+            guild_id: guildId,
+            channel_id: channelId,
+            sheet_name: sheetName,
+            spreadsheet_id: spreadsheetId
+          }
+        },
+        { upsert: true }
+      );
+      // Save to in-memory map
+      formChannels.set(`${guildId}:${spreadsheetId}`, {
+        channelId,
+        sheet_name: sheetName,
+        guild_id: guildId,
+        spreadsheet_id: spreadsheetId
+      });
+      clearUserState(userId);
+      await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('✅ Form Tracking Added')
+            .setDescription(`Now tracking **${sheetName}**. New responses will be posted in <#${channelId}>.`)
+            .setColor(0x00FF00)
+        ]
+      });
+      return;
+    }
+  } catch (error) {
+    console.error('Error in messageCreate handler:', error);
+    clearUserState(userId);
+    await message.reply('❌ Something went wrong. Please try `/addform` again.');
+  }
+});
 
 // Minimal Express server for Render.com port scan
 const app = express();
