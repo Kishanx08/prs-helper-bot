@@ -249,6 +249,70 @@ const commands = [
         required: true
       }
     ]
+  },
+  {
+    name: 'newsell',
+    description: 'Create a vehicle intake or acquisition receipt',
+    options: [
+      {
+        name: 'type',
+        description: 'Choose receipt type',
+        type: 3, // STRING
+        required: true,
+        choices: [
+          { name: 'Vehicle Intake', value: 'intake' },
+          { name: 'Vehicle Acquisition', value: 'acquisition' }
+        ]
+      },
+      {
+        name: 'name',
+        description: 'Name',
+        type: 3,
+        required: true
+      },
+      {
+        name: 'contact',
+        description: 'Contact Number',
+        type: 3,
+        required: true
+      },
+      {
+        name: 'cid',
+        description: 'CID',
+        type: 3,
+        required: true
+      },
+      {
+        name: 'dmail',
+        description: 'D-Mail',
+        type: 3,
+        required: true
+      },
+      {
+        name: 'vehicle',
+        description: 'Vehicle Name',
+        type: 3,
+        required: true
+      },
+      {
+        name: 'license',
+        description: 'License Plate',
+        type: 3,
+        required: true
+      },
+      {
+        name: 'amount',
+        description: 'Amount (Expected/ Paid)',
+        type: 10,
+        required: true
+      },
+      {
+        name: 'transferred_to',
+        description: 'Transferred To',
+        type: 3,
+        required: true
+      }
+    ]
   }
 ];
 
@@ -823,6 +887,72 @@ client.on('interactionCreate', async interaction => {
             embeds: [
               new EmbedBuilder()
                 .setDescription('❌ Failed to create vehicle purchase receipt')
+                .setColor(0xFF0000)
+            ],
+            ephemeral: true
+          });
+        }
+        break;
+      }
+      case 'newsell': {
+        try {
+          const type = interaction.options.getString('type');
+          const name = interaction.options.getString('name');
+          const contact = interaction.options.getString('contact');
+          const cid = interaction.options.getString('cid');
+          const dmail = interaction.options.getString('dmail');
+          const vehicle = interaction.options.getString('vehicle');
+          const license = interaction.options.getString('license');
+          const amount = interaction.options.getNumber('amount');
+          const transferredTo = interaction.options.getString('transferred_to');
+          const today = new Date();
+          const formattedDate = today.toLocaleDateString('en-US', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+          });
+
+          let receiptText = '';
+          let title = '';
+          if (type === 'intake') {
+            title = 'RECEIPT – VEHICLE ON CONSIGNMENT (CATALOG LISTING)';
+            receiptText = `Name: ${name}\nContact Number: ${contact}\nCID: ${cid}\nD-Mail: ${dmail}\n\nVehicle Name: ${vehicle}\nLicense Plate: ${license}\n\nExpected Amount: $${amount}\nTransferred To: ${transferredTo}\nDate: ${formattedDate}`;
+          } else {
+            title = '🔹 RECEIPT – VEHICLE PURCHASED BY COMPANY';
+            receiptText = `Name: ${name}\nContact Number: ${contact}\nCID: ${cid}\nD-Mail: ${dmail}\nVehicle Name: ${vehicle}\nLicense Plate: ${license}\n\nAmount Paid: $${amount}\nTransferred To: ${transferredTo}\nDate: ${formattedDate}`;
+          }
+
+          const receiptEmbed = new EmbedBuilder()
+            .setTitle(title)
+            .setDescription(receiptText)
+            .setColor(0x00FF00)
+            .setTimestamp();
+          const row = new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId(`copy_receipt_${Date.now()}`)
+                .setLabel('📋 Copy Receipt')
+                .setStyle(ButtonStyle.Primary)
+            );
+          // Send to the specified channel (same as booking/sell)
+          const channel = await client.channels.fetch('1354337998451507220');
+          if (channel) {
+            await channel.send({ embeds: [receiptEmbed], components: [row] });
+          }
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('✅ Receipt has been posted in <#1354337998451507220>')
+                .setColor(0x00FF00)
+            ],
+            ephemeral: true
+          });
+        } catch (error) {
+          console.error('Newsell error:', error);
+          await interaction.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('❌ Failed to create receipt')
                 .setColor(0xFF0000)
             ],
             ephemeral: true
