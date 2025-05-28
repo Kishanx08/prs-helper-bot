@@ -311,6 +311,11 @@ const commands = [
         description: 'Transferred To',
         type: 3,
         required: true
+      },
+
+      {
+       name: 'help',
+       description: 'Show all commands and their usage'
       }
     ]
   }
@@ -918,7 +923,7 @@ client.on('interactionCreate', async interaction => {
             title = 'RECEIPT – VEHICLE ON CONSIGNMENT (CATALOG LISTING)';
             receiptText = `Name: ${name}\nContact Number: ${contact}\nCID: ${cid}\nD-Mail: ${dmail}\n\nVehicle Name: ${vehicle}\nLicense Plate: ${license}\n\nExpected Amount: $${amount}\nTransferred To: ${transferredTo}\nDate: ${formattedDate}`;
           } else {
-            title = '🔹 RECEIPT – VEHICLE PURCHASED BY COMPANY';
+            title = 'RECEIPT – VEHICLE PURCHASED BY COMPANY';
             receiptText = `Name: ${name}\nContact Number: ${contact}\nCID: ${cid}\nD-Mail: ${dmail}\nVehicle Name: ${vehicle}\nLicense Plate: ${license}\n\nAmount Paid: $${amount}\nTransferred To: ${transferredTo}\nDate: ${formattedDate}`;
           }
 
@@ -1319,6 +1324,36 @@ client.on('interactionCreate', async interaction => {
       }
       case 'forcemaintenanceoff': {
         await handleForceMaintenanceOff(interaction);
+        break;
+      }
+      case 'help': {
+        const helpEmbed = new EmbedBuilder()
+          .setTitle('🤖 PRS Helper Bot Commands')
+          .setColor(0x00BFFF)
+          .setDescription('Here are all available commands and their usage:')
+          .addFields(
+            { name: '/addform', value: 'Start tracking a Google Form', inline: false },
+            { name: '/removeform [sheetname]', value: 'Stop tracking a Google Form', inline: false },
+            { name: '/listforms', value: 'List all tracked forms', inline: false },
+            { name: '/ping', value: 'Check bot latency and API status', inline: false },
+            { name: '/dm [user] [text]', value: 'Send a DM through the bot (requires permission)', inline: false },
+            { name: '/cats', value: 'Shows random cat pictures', inline: false },
+            { name: '/checkupdates', value: 'Manually check for any unsent form responses', inline: false },
+            { name: '/giveperms [user] [permission]', value: 'Grant permissions to a user (admin only)', inline: false },
+            { name: '/revokeperms [user] [permission]', value: 'Revoke permissions from a user (admin only)', inline: false },
+            { name: "/checkperms [user]", value: "Check a user's permissions", inline: false },
+            { name: '/setticketcategory [category]', value: 'Set the category where tickets will be created (admin only)', inline: false },
+            { name: '/closeticket', value: 'Close the current ticket channel (staff only)', inline: false },
+            { name: '/deleteticket', value: 'Delete the current ticket channel (staff only)', inline: false },
+            { name: '/maintenancelb [time]', value: 'Put the site in maintenance mode for a specified duration', inline: false },
+            { name: '/forcemaintenanceoff', value: 'Force turn off maintenance mode', inline: false },
+            { name: '/booking [buyer_name] [mobile] [model] [license] [total] [booking_amount]', value: 'Create a car booking receipt', inline: false },
+            { name: '/sell [buyer_name] [buyer_cid] [buyer_number] [model] [license] [price] [discount]', value: 'Create a vehicle purchase receipt', inline: false },
+            { name: '/newsell [type] [name] [contact] [cid] [dmail] [vehicle] [license] [amount] [transferred_to]', value: 'Create a vehicle intake or acquisition receipt', inline: false },
+            { name: '/help', value: 'Show this help message', inline: false }
+          )
+          .setFooter({ text: 'For detailed usage, use /help or contact an admin.' });
+        await interaction.reply({ embeds: [helpEmbed], ephemeral: true });
         break;
       }
       default: {
