@@ -315,7 +315,8 @@ const commands = [
 
       {
        name: 'help',
-       description: 'Show all commands and their usage'
+       description: 'Show all commands and their usage',
+       type: 3 // or another appropriate type
       }
     ]
   }
