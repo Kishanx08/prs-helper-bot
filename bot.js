@@ -629,58 +629,256 @@ client.once('ready', async () => {
 
 // Slash command handlers
 client.on('interactionCreate', async interaction => {
+  console.log(`Received interaction: ${interaction.id}, Type: ${interaction.type}`);
   if (!interaction || !interaction.guild?.id) {
     console.error('Invalid interaction received');
     return;
   }
 
-  // Handle copy receipt button interaction
-  if (interaction.isButton() && interaction.customId.startsWith('copy_receipt_')) {
-    try {
-      // Get the receipt text from the embed
-      const embed = interaction.message.embeds[0];
-      if (!embed || !embed.description) {
-        console.error('Receipt embed not found');
+  // Handle button interactions
+  if (interaction.isButton()) {
+    if (interaction.customId.startsWith('copy_receipt_')) {
+      try {
+        // Get the receipt text from the embed
+        const embed = interaction.message.embeds[0];
+        if (!embed || !embed.description) {
+          console.error('Receipt embed not found');
+          await interaction.reply({
+            content: '❌ Failed to copy receipt: Receipt not found',
+            ephemeral: true
+          });
+          return;
+        }
+
+        // Reply with the receipt text
         await interaction.reply({
-          content: '❌ Failed to copy receipt: Receipt not found',
+          content: `Here's your receipt:\n\`\`\`${embed.description}\`\`\``,
           ephemeral: true
         });
+
+        // Update the button to show it was copied
+        const newRow = new ActionRowBuilder()
+          .addComponents(
+            new ButtonBuilder()
+              .setCustomId(interaction.customId)
+              .setLabel('📋 Copied')
+              .setStyle(ButtonStyle.Secondary)
+              .setDisabled(true)
+          );
+
+        await interaction.message.edit({
+          embeds: interaction.message.embeds,
+          components: [newRow]
+        });
+
+        return;
+      } catch (error) {
+        console.error('Error handling copy receipt button:', error);
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({
+            content: '❌ Failed to copy receipt. Please try again.',
+            ephemeral: true
+          });
+        }
         return;
       }
+    }
+    
+    if (interaction.customId.startsWith('mark_remaining_')) {
+      try {
+        // Defer the reply to prevent interaction timeout
+        await interaction.deferReply({ ephemeral: true });
 
-      // Reply with the receipt text
-      await interaction.reply({
-        content: `Here's your receipt:\n\n${embed.description}`,
-        ephemeral: true
-      });
-
-      // Update the button to show it was copied
-      const newRow = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId(interaction.customId)
-            .setLabel('📋 Copied')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(true)
-        );
-
-      await interaction.message.edit({
-        embeds: interaction.message.embeds,
-        components: [newRow]
-      });
-
-      return;
-    } catch (error) {
-      console.error('Error handling copy receipt button:', error);
-      if (!interaction.replied && !interaction.deferred) {
-        await interaction.reply({
-          content: '❌ Failed to copy receipt. Please try again.',
-          ephemeral: true
+        // Get the original receipt data from the embed
+        const originalEmbed = interaction.message.embeds[0];
+        const description = originalEmbed.description;
+        
+        // Parse the original receipt data
+        const lines = description.split('\n').filter(line => line.includes(': ')); // Filter lines with key-value pairs
+        const data = {};
+        lines.forEach(line => {
+            const [key, value] = line.split(': ');
+            data[key.trim()] = value.trim();
         });
+
+        const buyerName = data['Buyer Name'];
+        const mobile = data['Buyer Mobile Number'];
+        const model = data['Model'];
+        const license = data['License Plate'];
+        const total = parseFloat(data['Total to Pay']?.replace('$', '') || '0');
+        const bookingAmount = parseFloat(data['Booking Amount']?.replace('$', '') || '0');
+
+        // Create a modal for entering the remaining payment amount
+        const modal = new ModalBuilder()
+          .setCustomId('remaining_payment_modal_' + interaction.customId.split('_')[2]) // Include a unique ID from interaction
+          .setTitle('Enter Remaining Payment');
+
+        const remainingAmountInput = new TextInputBuilder()
+          .setCustomId('remaining_amount_input') // Unique ID for the text input
+          .setLabel('Remaining Amount Paid')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('Enter the amount being paid now')
+          .setRequired(true);
+
+        const firstActionRow = new ActionRowBuilder().addComponents(remainingAmountInput);
+        modal.addComponents(firstActionRow);
+
+        await interaction.followUp({ content: 'Opening modal...', ephemeral: true }); // Follow up since we deferred
+        await interaction.showModal(modal).catch(modalError => {
+          console.error('Error showing modal:', modalError);
+          interaction.editReply({ content: '❌ Failed to open modal. Please try again.', ephemeral: true });
+        });
+
+        // Handle the modal submission is done in the messageCreate listener or a separate modal submit listener.
+        // We will handle this in the interactionCreate listener as well for simplicity.
+
+        return; // Stop processing this button interaction
+      } catch (error) {
+        console.error('Error setting up remaining payment modal:', error);
+        if (!interaction.replied && !interaction.deferred) {
+           await interaction.reply({ content: '❌ An error occurred while preparing the payment process.', ephemeral: true });
+        } else if (interaction.deferred) {
+           await interaction.editReply({ content: '❌ An error occurred while preparing the payment process.', ephemeral: true });
+        }
+        return;
       }
-      return;
     }
   }
+
+  // Handle modal submissions
+  if (interaction.isModalSubmit()) {
+    if (interaction.customId.startsWith('remaining_payment_modal_')) {
+      try {
+        await interaction.deferReply({ ephemeral: true });
+
+        const remainingAmountString = interaction.fields.getTextInputValue('remaining_amount_input');
+        const remainingAmount = parseFloat(remainingAmountString);
+
+        if (isNaN(remainingAmount) || remainingAmount < 0) {
+            await interaction.editReply({ content: '❌ Invalid amount entered. Please enter a valid positive number.', ephemeral: true });
+            return;
+        }
+
+        // We need to retrieve the original booking details. Since we don't have a database for bookings yet,
+        // we'll try to get them from the message the modal was triggered from. This is not ideal and can break
+        // if the message is edited or the format changes. A database would be better for persistence.
+
+        // Find the original message by the ID embedded in the modal customId
+        const originalMessageId = interaction.customId.split('_')[3]; // Assuming the ID format is remaining_payment_modal_<message_id>
+        const originalMessage = await interaction.channel.messages.fetch(originalMessageId).catch(fetchError => {
+            console.error('Could not fetch original message:', fetchError);
+            return null;
+        });
+
+        if (!originalMessage || !originalMessage.embeds || originalMessage.embeds.length === 0) {
+             await interaction.editReply({ content: '❌ Could not retrieve original booking details.', ephemeral: true });
+             return;
+        }
+
+        const originalEmbed = originalMessage.embeds[0];
+        const description = originalEmbed.description;
+
+        const lines = description.split('\n').filter(line => line.includes(': ')); // Filter lines with key-value pairs
+        const data = {};
+        lines.forEach(line => {
+            const [key, value] = line.split(': ');
+            data[key.trim()] = value.trim();
+        });
+
+        const buyerName = data['Buyer Name'];
+        const mobile = data['Buyer Mobile Number'];
+        const model = data['Model'];
+        const license = data['License Plate'];
+        const total = parseFloat(data['Total to Pay']?.replace('$', '') || '0');
+        const initialBookingAmount = parseFloat(data['Booking Amount']?.replace('$', '') || '0');
+
+        const totalPaid = initialBookingAmount + remainingAmount;
+        const isComplete = totalPaid >= total;
+
+        // Create the remaining payment receipt
+        const remainingReceiptText = `**PAYMENT COMPLETION RECEIPT**\n\n` +
+          `Buyer Name: ${buyerName}\n` +
+          `Buyer Mobile Number: ${mobile}\n` +
+          `Model: ${model}\n` +
+          `License Plate: ${license}\n\n` +
+          `Total Amount: $${total}\n` +
+          `Initial Booking Amount: $${initialBookingAmount}\n` + // Use initialBookingAmount here
+          `Remaining Amount Paid: $${remainingAmount}\n` +
+          `Total Paid: $${totalPaid}\n` +
+          `Payment Status: ${isComplete ? '✅ Complete' : '⚠️ Partial'}\n` +
+          `Date: ${new Date().toLocaleDateString('en-US', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+          })}`;
+
+        const remainingReceiptEmbed = new EmbedBuilder()
+          .setTitle('💰 Remaining Payment Receipt')
+          .setDescription(remainingReceiptText)
+          .setColor(isComplete ? 0x00FF00 : 0xFFA500)
+          .setTimestamp();
+
+        const row = new ActionRowBuilder()
+          .addComponents(
+            new ButtonBuilder()
+              .setCustomId(`copy_receipt_${Date.now()}`)
+              .setLabel('📋 Copy Receipt')
+              .setStyle(ButtonStyle.Primary)
+          );
+
+        // Send the remaining payment receipt to the same channel as the original message
+        await interaction.channel.send({ embeds: [remainingReceiptEmbed], components: [row] });
+
+        // Update the original message to show it's been processed
+        // We need to fetch the original message again because the state might have changed
+         const messageToEdit = await interaction.channel.messages.fetch(originalMessage.id).catch(fetchError => {
+            console.error('Could not refetch original message for update:', fetchError);
+            return null;
+        });
+
+        if (messageToEdit) {
+           const updatedComponents = messageToEdit.components.map(row => {
+              return new ActionRowBuilder().addComponents(
+                 row.components.map(component => {
+                    if (component.customId && component.customId.startsWith('mark_remaining_')) {
+                       return new ButtonBuilder()
+                          .setCustomId(component.customId)
+                          .setLabel('✅ Remaining Payment Recorded')
+                          .setStyle(ButtonStyle.Secondary)
+                          .setDisabled(true);
+                    } else {
+                       return ButtonBuilder.from(component); // Keep other buttons as they are
+                    }
+                 })
+              );
+           });
+
+           await messageToEdit.edit({
+              embeds: messageToEdit.embeds,
+              components: updatedComponents
+           }).catch(editError => console.error('Failed to edit original message:', editError));
+        }
+
+        await interaction.editReply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription('✅ Remaining payment receipt has been posted.')
+              .setColor(0x00FF00)
+          ]
+        });
+
+      } catch (error) {
+        console.error('Error handling modal submission:', error);
+         if (!interaction.replied && !interaction.deferred) {
+           await interaction.reply({ content: '❌ An error occurred while processing the payment.', ephemeral: true });
+        } else if (interaction.deferred) {
+           await interaction.editReply({ content: '❌ An error occurred while processing the payment.', ephemeral: true });
+        }
+      }
+      return; // Stop processing this modal interaction
+    }
+  }
+
   try {
     switch (interaction.commandName) {
       case 'addform':
@@ -1382,129 +1580,6 @@ client.on('interactionCreate', async interaction => {
           ],
           ephemeral: true
         });
-      }
-    }
-
-    // In the interactionCreate event handler, add this case for button interactions
-    if (interaction.isButton()) {
-      if (interaction.customId.startsWith('mark_remaining_')) {
-        try {
-          // Get the original receipt data
-          const originalEmbed = interaction.message.embeds[0];
-          const description = originalEmbed.description;
-          
-          // Parse the original receipt data
-          const lines = description.split('\n');
-          const buyerName = lines[0].split(': ')[1];
-          const mobile = lines[1].split(': ')[1];
-          const model = lines[2].split(': ')[1];
-          const license = lines[3].split(': ')[1];
-          const total = parseFloat(lines[4].split('$')[1]);
-          const bookingAmount = parseFloat(lines[6].split('$')[1]);
-          const amountDue = parseFloat(lines[7].split('$')[1]);
-
-          // Create a modal for entering the remaining payment amount
-          const modal = new ModalBuilder()
-            .setCustomId('remaining_payment_modal')
-            .setTitle('Enter Remaining Payment');
-
-          const remainingAmountInput = new TextInputBuilder()
-            .setCustomId('remaining_amount')
-            .setLabel('Remaining Amount Paid')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('Enter the amount being paid now')
-            .setRequired(true);
-
-          const firstActionRow = new ActionRowBuilder().addComponents(remainingAmountInput);
-          modal.addComponents(firstActionRow);
-
-          await interaction.showModal(modal);
-
-          // Handle the modal submission
-          const filter = i => i.customId === 'remaining_payment_modal';
-          const modalSubmit = await interaction.awaitModalSubmit({ filter, time: 300000 });
-
-          const remainingAmount = parseFloat(modalSubmit.fields.getTextInputValue('remaining_amount'));
-          const totalPaid = bookingAmount + remainingAmount;
-          const isComplete = totalPaid >= total;
-
-          // Create the remaining payment receipt
-          const remainingReceiptText = `**REMAINING PAYMENT RECEIPT**\n\n` +
-            `Buyer Name: ${buyerName}\n` +
-            `Buyer Mobile Number: ${mobile}\n` +
-            `Model: ${model}\n` +
-            `License Plate: ${license}\n\n` +
-            `Total Amount: $${total}\n` +
-            `Initial Booking Amount: $${bookingAmount}\n` +
-            `Remaining Amount Paid: $${remainingAmount}\n` +
-            `Total Paid: $${totalPaid}\n` +
-            `Payment Status: ${isComplete ? '✅ Complete' : '⚠️ Partial'}\n` +
-            `Date: ${new Date().toLocaleDateString('en-US', {
-              day: '2-digit',
-              month: '2-digit',
-              year: 'numeric'
-            })}`;
-
-          const remainingReceiptEmbed = new EmbedBuilder()
-            .setTitle('💰 Remaining Payment Receipt')
-            .setDescription(remainingReceiptText)
-            .setColor(isComplete ? 0x00FF00 : 0xFFA500)
-            .setTimestamp();
-
-          const row = new ActionRowBuilder()
-            .addComponents(
-              new ButtonBuilder()
-                .setCustomId(`copy_receipt_${Date.now()}`)
-                .setLabel('📋 Copy Receipt')
-                .setStyle(ButtonStyle.Primary)
-            );
-
-          // Send the remaining payment receipt
-          const bookingChannel = await client.channels.fetch('1354337998451507220');
-          if (bookingChannel) {
-            await bookingChannel.send({ embeds: [remainingReceiptEmbed], components: [row] });
-          }
-
-          // Update the original message to show it's been processed
-          const updatedRow = new ActionRowBuilder()
-            .addComponents(
-              new ButtonBuilder()
-                .setCustomId(`copy_receipt_${Date.now()}`)
-                .setLabel('📋 Copy Receipt')
-                .setStyle(ButtonStyle.Primary),
-              new ButtonBuilder()
-                .setCustomId(`mark_remaining_${Date.now()}`)
-                .setLabel('✅ Remaining Payment Recorded')
-                .setStyle(ButtonStyle.Secondary)
-                .setDisabled(true)
-            );
-
-          await interaction.message.edit({
-            embeds: [interaction.message.embeds[0]],
-            components: [updatedRow]
-          });
-
-          await modalSubmit.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setDescription('✅ Remaining payment receipt has been posted in <#1354337998451507220>')
-                .setColor(0x00FF00)
-            ],
-            ephemeral: true
-          });
-        } catch (error) {
-          console.error('Error handling remaining payment:', error);
-          if (!interaction.replied) {
-            await interaction.reply({
-              embeds: [
-                new EmbedBuilder()
-                  .setDescription('❌ Failed to process remaining payment')
-                  .setColor(0xFF0000)
-              ],
-              ephemeral: true
-            });
-          }
-        }
       }
     }
   } catch (error) {
