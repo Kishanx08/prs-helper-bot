@@ -1066,7 +1066,16 @@ client.on('interactionCreate', async interaction => {
           const discount = interaction.options.getNumber('discount');
           // Calculate final price after discount
           const finalPrice = price - (price * (discount / 100));
-          const receiptText = `**VEHICLE PURCHASE RECEIPT**\n\nBuyer Name - ${buyerName}\nBuyer CID - ${buyerCid}\nBuyer Number - ${buyerNumber}\n\nVehicle Model - ${model}\nLicense Plate - ${license}\n\nPrice - $${price}\nDiscount - ${discount}%\nTotal to Pay - $${finalPrice}`;
+          const receiptText = `Buyer Name - ${buyerName}
+Buyer CID - ${buyerCid}
+Buyer Number - ${buyerNumber}
+
+Vehicle Model - ${model}
+License Plate - ${license}
+
+Price - $${price}
+Discount - ${discount}%
+Total to Pay - $${finalPrice}`;
           const receiptEmbed = new EmbedBuilder()
             .setTitle('🚗 Vehicle Purchase Receipt')
             .setDescription(receiptText)
