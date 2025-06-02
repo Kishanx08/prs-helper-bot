@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Partials, EmbedBuilder, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const { google } = require('googleapis');
 const { MongoClient } = require('mongodb');
 const express = require('express');
@@ -650,7 +650,7 @@ client.on('interactionCreate', async interaction => {
 
       // Reply with the receipt text
       await interaction.reply({
-        content: `Here's your receipt:\n\${embed.description}\`,
+        content: `Here's your receipt:\n\n${embed.description}`,
         ephemeral: true
       });
 
@@ -799,8 +799,10 @@ client.on('interactionCreate', async interaction => {
           const license = interaction.options.getString('license');
           const total = interaction.options.getNumber('total');
           const bookingAmount = interaction.options.getNumber('booking_amount');
+          
           // Calculate due amount
           const amountDue = total - bookingAmount;
+          
           // Calculate validity date (today + 6 days = 7 days total)
           const validityDate = new Date();
           validityDate.setDate(validityDate.getDate() + 6);
@@ -809,33 +811,50 @@ client.on('interactionCreate', async interaction => {
             month: '2-digit',
             year: 'numeric'
           });
-          const receiptText = `Buyer Name: ${buyerName}\nBuyer Mobile Number: ${mobile}\nModel: ${model}\nLicense Plate: ${license}\nTotal to Pay: $${total}\n\nBooking Amount: $${bookingAmount}\nAmount Due: $${amountDue}\nValidity 1 Week Till ${formattedDate}`;
+
+          const receiptText = `Buyer Name: ${buyerName}\n` +
+            `Buyer Mobile Number: ${mobile}\n` +
+            `Model: ${model}\n` +
+            `License Plate: ${license}\n` +
+            `Total to Pay: $${total}\n\n` +
+            `Booking Amount: $${bookingAmount}\n` +
+            `Amount Due: $${amountDue}\n` +
+            `Validity 1 Week Till ${formattedDate}`;
+
           const receiptEmbed = new EmbedBuilder()
             .setTitle('🚗 Car Booking Receipt')
             .setDescription(receiptText)
             .setColor(0x00FF00)
             .setTimestamp();
+
+          // Create two buttons: Copy Receipt and Mark Remaining Payment
           const row = new ActionRowBuilder()
             .addComponents(
               new ButtonBuilder()
                 .setCustomId(`copy_receipt_${Date.now()}`)
                 .setLabel('📋 Copy Receipt')
-                .setStyle(ButtonStyle.Primary)
+                .setStyle(ButtonStyle.Primary),
+              new ButtonBuilder()
+                .setCustomId(`mark_remaining_${Date.now()}`)
+                .setLabel('💰 Mark Remaining Payment')
+                .setStyle(ButtonStyle.Success)
             );
-          // Send to the specified channel
-          const bookingChannel = await client.channels.fetch('1354337998451507220');
-          if (bookingChannel) {
-            await bookingChannel.send({ embeds: [receiptEmbed], components: [row] });
-          }
-          // Send confirmation to the user
-          await interaction.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setDescription('✅ Booking receipt has been posted in <#1354337998451507220>')
-                .setColor(0x00FF00)
-            ],
-            ephemeral: true
-          });
+
+            // Send to the specified channel
+            const bookingChannel = await client.channels.fetch('1354337998451507220');
+            if (bookingChannel) {
+              await bookingChannel.send({ embeds: [receiptEmbed], components: [row] });
+            }
+
+            // Send confirmation to the user
+            await interaction.reply({
+              embeds: [
+                new EmbedBuilder()
+                  .setDescription('✅ Booking receipt has been posted in <#1354337998451507220>')
+                  .setColor(0x00FF00)
+              ],
+              ephemeral: true
+            });
         } catch (error) {
           console.error('Booking error:', error);
           await interaction.reply({
@@ -1363,6 +1382,129 @@ client.on('interactionCreate', async interaction => {
           ],
           ephemeral: true
         });
+      }
+    }
+
+    // In the interactionCreate event handler, add this case for button interactions
+    if (interaction.isButton()) {
+      if (interaction.customId.startsWith('mark_remaining_')) {
+        try {
+          // Get the original receipt data
+          const originalEmbed = interaction.message.embeds[0];
+          const description = originalEmbed.description;
+          
+          // Parse the original receipt data
+          const lines = description.split('\n');
+          const buyerName = lines[0].split(': ')[1];
+          const mobile = lines[1].split(': ')[1];
+          const model = lines[2].split(': ')[1];
+          const license = lines[3].split(': ')[1];
+          const total = parseFloat(lines[4].split('$')[1]);
+          const bookingAmount = parseFloat(lines[6].split('$')[1]);
+          const amountDue = parseFloat(lines[7].split('$')[1]);
+
+          // Create a modal for entering the remaining payment amount
+          const modal = new ModalBuilder()
+            .setCustomId('remaining_payment_modal')
+            .setTitle('Enter Remaining Payment');
+
+          const remainingAmountInput = new TextInputBuilder()
+            .setCustomId('remaining_amount')
+            .setLabel('Remaining Amount Paid')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('Enter the amount being paid now')
+            .setRequired(true);
+
+          const firstActionRow = new ActionRowBuilder().addComponents(remainingAmountInput);
+          modal.addComponents(firstActionRow);
+
+          await interaction.showModal(modal);
+
+          // Handle the modal submission
+          const filter = i => i.customId === 'remaining_payment_modal';
+          const modalSubmit = await interaction.awaitModalSubmit({ filter, time: 300000 });
+
+          const remainingAmount = parseFloat(modalSubmit.fields.getTextInputValue('remaining_amount'));
+          const totalPaid = bookingAmount + remainingAmount;
+          const isComplete = totalPaid >= total;
+
+          // Create the remaining payment receipt
+          const remainingReceiptText = `**REMAINING PAYMENT RECEIPT**\n\n` +
+            `Buyer Name: ${buyerName}\n` +
+            `Buyer Mobile Number: ${mobile}\n` +
+            `Model: ${model}\n` +
+            `License Plate: ${license}\n\n` +
+            `Total Amount: $${total}\n` +
+            `Initial Booking Amount: $${bookingAmount}\n` +
+            `Remaining Amount Paid: $${remainingAmount}\n` +
+            `Total Paid: $${totalPaid}\n` +
+            `Payment Status: ${isComplete ? '✅ Complete' : '⚠️ Partial'}\n` +
+            `Date: ${new Date().toLocaleDateString('en-US', {
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric'
+            })}`;
+
+          const remainingReceiptEmbed = new EmbedBuilder()
+            .setTitle('💰 Remaining Payment Receipt')
+            .setDescription(remainingReceiptText)
+            .setColor(isComplete ? 0x00FF00 : 0xFFA500)
+            .setTimestamp();
+
+          const row = new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId(`copy_receipt_${Date.now()}`)
+                .setLabel('📋 Copy Receipt')
+                .setStyle(ButtonStyle.Primary)
+            );
+
+          // Send the remaining payment receipt
+          const bookingChannel = await client.channels.fetch('1354337998451507220');
+          if (bookingChannel) {
+            await bookingChannel.send({ embeds: [remainingReceiptEmbed], components: [row] });
+          }
+
+          // Update the original message to show it's been processed
+          const updatedRow = new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId(`copy_receipt_${Date.now()}`)
+                .setLabel('📋 Copy Receipt')
+                .setStyle(ButtonStyle.Primary),
+              new ButtonBuilder()
+                .setCustomId(`mark_remaining_${Date.now()}`)
+                .setLabel('✅ Remaining Payment Recorded')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(true)
+            );
+
+          await interaction.message.edit({
+            embeds: [interaction.message.embeds[0]],
+            components: [updatedRow]
+          });
+
+          await modalSubmit.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setDescription('✅ Remaining payment receipt has been posted in <#1354337998451507220>')
+                .setColor(0x00FF00)
+            ],
+            ephemeral: true
+          });
+        } catch (error) {
+          console.error('Error handling remaining payment:', error);
+          if (!interaction.replied) {
+            await interaction.reply({
+              embeds: [
+                new EmbedBuilder()
+                  .setDescription('❌ Failed to process remaining payment')
+                  .setColor(0xFF0000)
+              ],
+              ephemeral: true
+            });
+          }
+        }
       }
     }
   } catch (error) {
