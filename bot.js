@@ -707,7 +707,7 @@ client.on('interactionCreate', async interaction => {
 
         // Create a modal for entering the remaining payment amount
         const modal = new ModalBuilder()
-          .setCustomId('remaining_payment_modal_' + interaction.customId.split('_')[2]) // Include a unique ID from interaction
+          .setCustomId('remaining_payment_modal_msgid_' + interaction.message.id) // Use a distinct format and the original message ID
           .setTitle('Enter Remaining Payment');
 
         const remainingAmountInput = new TextInputBuilder()
@@ -725,9 +725,6 @@ client.on('interactionCreate', async interaction => {
           interaction.followUp({ content: '❌ Failed to open modal. Please try again.', ephemeral: true });
         });
 
-        // Handle the modal submission is done in the messageCreate listener or a separate modal submit listener.
-        // We will handle this in the interactionCreate listener as well for simplicity.
-
         return; // Stop processing this button interaction
       } catch (error) {
         console.error('Error setting up remaining payment modal:', error);
@@ -743,7 +740,7 @@ client.on('interactionCreate', async interaction => {
 
   // Handle modal submissions
   if (interaction.isModalSubmit()) {
-    if (interaction.customId.startsWith('remaining_payment_modal_')) {
+    if (interaction.customId.startsWith('remaining_payment_modal_msgid_')) { // Check for the new distinct format
       try {
         await interaction.deferReply({ ephemeral: true });
 
@@ -755,13 +752,9 @@ client.on('interactionCreate', async interaction => {
             return;
         }
 
-        // We need to retrieve the original booking details. Since we don't have a database for bookings yet,
-        // we'll try to get them from the message the modal was triggered from. This is not ideal and can break
-        // if the message is edited or the format changes. A database would be better for persistence.
-
         // Find the original message by the ID embedded in the modal customId
-        const originalMessageId = interaction.customId.split('_')[3]; // Assuming the ID format is remaining_payment_modal_<message_id>
-        const originalMessage = await interaction.channel.messages.fetch(originalMessageId).catch(fetchError => {
+        const bookingMessageId = interaction.customId.split('_')[4]; // Corrected index and variable name
+        const originalMessage = await interaction.channel.messages.fetch(bookingMessageId).catch(fetchError => {
             console.error('Could not fetch original message:', fetchError);
             return null;
         });
