@@ -686,9 +686,6 @@ client.on('interactionCreate', async interaction => {
     
     if (interaction.customId.startsWith('mark_remaining_')) {
       try {
-        // Defer the reply to prevent interaction timeout
-        await interaction.deferReply({ ephemeral: true });
-
         // Get the original receipt data from the embed
         const originalEmbed = interaction.message.embeds[0];
         const description = originalEmbed.description;
@@ -723,10 +720,9 @@ client.on('interactionCreate', async interaction => {
         const firstActionRow = new ActionRowBuilder().addComponents(remainingAmountInput);
         modal.addComponents(firstActionRow);
 
-        await interaction.followUp({ content: 'Opening modal...', ephemeral: true }); // Follow up since we deferred
         await interaction.showModal(modal).catch(modalError => {
           console.error('Error showing modal:', modalError);
-          interaction.editReply({ content: '❌ Failed to open modal. Please try again.', ephemeral: true });
+          interaction.followUp({ content: '❌ Failed to open modal. Please try again.', ephemeral: true });
         });
 
         // Handle the modal submission is done in the messageCreate listener or a separate modal submit listener.
