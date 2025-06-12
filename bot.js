@@ -782,7 +782,34 @@ client.on('interactionCreate', async interaction => {
           ]
         });
         break;
+      }      case 'say': {
+        // Only allow users with MANAGE_MESSAGES permission to use this command
+        if (!interaction.member.permissions.has('ManageMessages')) {
+          return interaction.reply({ 
+            content: '❌ You need Manage Messages permission to use this command.',
+            ephemeral: true 
+          });
+        }
+        
+        const channel = interaction.options.getChannel('channel');
+        const text = interaction.options.getString('text');
+        
+        try {
+          await channel.send(text);
+          await interaction.reply({ 
+            content: `✅ Message sent to <#${channel.id}>`,
+            ephemeral: true 
+          });
+        } catch (err) {
+          console.error('Error sending message:', err);
+          await interaction.reply({ 
+            content: '❌ Failed to send message. Make sure I have permission to send messages in that channel.',
+            ephemeral: true 
+          });
+        }
+        break;
       }
+      
       case 'cats': {
         try {
           const response = await fetch('https://api.thecatapi.com/v1/images/search');
