@@ -157,6 +157,24 @@ const commands = [
     ]
   },
   {
+    name: 'say',
+    description: 'Send a normal message to a specified channel',
+    options: [
+      {
+        name: 'channel',
+        description: 'Channel to send the message to',
+        type: 7, // CHANNEL type
+        required: true
+     },
+     {
+        name: 'text',
+        description: 'Message to send',
+        type: 3, // STRING type
+        required: true
+     }
+    ]
+  },
+  {
     name: 'forcemaintenanceoff',
     description: 'Force turn off maintenance mode'
   },
