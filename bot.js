@@ -1453,22 +1453,39 @@ client.on('messageCreate', async message => {
       if (!forwardChannel) {
         console.error('❌ Forward channel not found');
         return;
-      }
-
-      // Create embed with user info and message
+      }      // Create embed with user info and message
       const forwardEmbed = new EmbedBuilder()
         .setAuthor({
           name: message.author.tag,
           iconURL: message.author.displayAvatarURL({ dynamic: true })
         })
-        .setDescription(message.content)
         .setColor(0x00BFFF)
         .setTimestamp();
+
+      // Handle message content - could be a link or text
+      if (message.content) {
+        // Check if the message is a URL
+        const urlPattern = /https?:\/\/[^\s]+/;
+        if (urlPattern.test(message.content)) {
+          // If it's a URL that ends with an image/gif extension
+          if (/\.(gif|jpe?g|png|webp)$/i.test(message.content)) {
+            forwardEmbed.setImage(message.content);
+          } else {
+            forwardEmbed.setDescription(message.content);
+          }
+        } else {
+          forwardEmbed.setDescription(message.content);
+        }
+      }
 
       // Add attachment if any
       if (message.attachments.size > 0) {
         const attachment = message.attachments.first();
-        forwardEmbed.setImage(attachment.url);
+        if (!forwardEmbed.data.image) { // Only set image if we haven't already set one from the URL
+          forwardEmbed.setImage(attachment.url);
+        } else {
+          forwardEmbed.addFields({ name: 'Attachment', value: attachment.url });
+        }
       }
 
       // Send to forward channel
