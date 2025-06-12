@@ -1441,9 +1441,47 @@ async function handleAddForm(interaction) {
   }
 }
 
-// Message handling for form setup
+// Message handling for DMs and form setup
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
+
+  // Handle DMs to the bot
+  if (message.channel.type === ChannelType.DM) {
+    try {
+      // Get the channel to forward messages to
+      const forwardChannel = await client.channels.fetch('1377139820383699046');
+      if (!forwardChannel) {
+        console.error('❌ Forward channel not found');
+        return;
+      }
+
+      // Create embed with user info and message
+      const forwardEmbed = new EmbedBuilder()
+        .setAuthor({
+          name: message.author.tag,
+          iconURL: message.author.displayAvatarURL({ dynamic: true })
+        })
+        .setDescription(message.content)
+        .setColor(0x00BFFF)
+        .setTimestamp();
+
+      // Add attachment if any
+      if (message.attachments.size > 0) {
+        const attachment = message.attachments.first();
+        forwardEmbed.setImage(attachment.url);
+      }
+
+      // Send to forward channel
+      await forwardChannel.send({ embeds: [forwardEmbed] });
+      
+      // React to the DM to show it was forwarded
+      await message.react('✅');
+    } catch (error) {
+      console.error('Error forwarding DM:', error);
+      await message.react('❌');
+    }
+    return;
+  }
 
   const userId = message.author.id;
   const state = interactionState[userId];
