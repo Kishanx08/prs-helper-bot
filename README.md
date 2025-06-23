@@ -1,6 +1,3 @@
-Absolutely! To create a high-quality README for the prs-helper-bot, I'll first need to analyze the codebase to understand its features, usage, setup, and purpose. I'll start by searching for the project's entry points and main files, such as app.js, index.js, main.py, README.md (if any), package.json, or other key files that can reveal the project's structure and functionality.
-
-Let me begin by searching for common entry files and configuration files in the root of your repository.````markdown name=README.md
 # PRS Helper Bot
 
 **PRS Helper Bot** is a feature-rich Discord bot for managing Google Form responses, creating and managing receipts, ticketing, and utility workflows for car dealerships or sales teams. It is designed to streamline operations by integrating Google Sheets, Discord, and MongoDB.
